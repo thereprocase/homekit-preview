@@ -1,6 +1,6 @@
 const ICON_URL = "/homekit_preview_static/icon.svg";
-const PANEL_TAG = "homekit-preview-panel-v082";
-const BUILD_LABEL = "0.8.2 · 1fbefbe";
+const PANEL_TAG = "homekit-preview-panel-v083";
+const BUILD_LABEL = "0.8.3 · ui-fit";
 const EMPTY_FILTER = {
   include_domains: [], include_entities: [], include_entity_globs: [],
   exclude_domains: [], exclude_entities: [], exclude_entity_globs: [],
@@ -341,7 +341,7 @@ class HomeKitPreviewPanel extends HTMLElement {
     return `<style>
       :host {
         --hp-radius: 8px;
-        --hp-gap: 16px;
+        --hp-gap: 14px;
         --hp-surface: var(--card-background-color);
         --hp-surface-soft: color-mix(in srgb, var(--secondary-background-color) 72%, var(--card-background-color));
         --hp-border: 1px solid var(--divider-color);
@@ -354,65 +354,67 @@ class HomeKitPreviewPanel extends HTMLElement {
         background: var(--primary-background-color);
       }
       * { box-sizing: border-box; }
-      .wrap { max-width: 1440px; margin: 0 auto; }
+      .wrap { max-width: 1440px; margin: 0 auto; min-width: 0; }
+      .wrap > *, .stack > *, .layout > *, .panel, .notice, .card, .controlBar, .tableWrap { min-width: 0; }
       .stack { display: flex; flex-direction: column; gap: var(--hp-gap); }
-      .top { display: grid; grid-template-columns: minmax(280px, 1fr) auto; gap: var(--hp-gap); align-items: stretch; margin-bottom: 14px; }
+      .top { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(320px, 460px); gap: var(--hp-gap); align-items: stretch; margin-bottom: 12px; }
       .brandBlock, .bridgeBlock, .metric, .card, .panel, .notice, .controlBar, .tableWrap { border: var(--hp-border); border-radius: var(--hp-radius); background: var(--hp-surface); box-shadow: var(--hp-shadow); }
-      .brandBlock { display: flex; gap: 14px; align-items: center; min-width: 0; padding: 16px; }
-      .bridgeBlock { min-width: min(100%, 460px); display: flex; flex-direction: column; gap: 10px; padding: 16px; }
+      .brandBlock { display: flex; gap: 12px; align-items: center; min-width: 0; padding: 14px; }
+      .bridgeBlock { min-width: 0; display: flex; flex-direction: column; gap: 8px; padding: 14px; }
       .appIcon { width: 46px; height: 46px; border-radius: var(--hp-radius); flex: 0 0 auto; }
       h1 { margin: 0; font-size: 24px; line-height: 1.15; font-weight: 800; letter-spacing: 0; }
       .sub, .muted { color: var(--secondary-text-color); }
       .sub { margin-top: 4px; font-size: 13px; }
       .bridgeTitle { font-size: 13px; color: var(--secondary-text-color); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
       .bridgeActions, .controls, .toolbar, .actionRow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-      .bridgeActions select { flex: 1 1 260px; min-width: 0; }
-      select, input, button { min-height: 42px; font: inherit; border-radius: var(--hp-radius); border: var(--hp-border); background: var(--hp-surface); color: var(--primary-text-color); padding: 9px 11px; }
-      input { min-width: 260px; }
-      button { cursor: pointer; border-color: var(--primary-color); background: var(--primary-color); color: var(--text-primary-color); font-weight: 700; }
+      .bridgeActions select { flex: 1 1 220px; min-width: 0; max-width: 100%; }
+      select, input, button { min-height: 36px; max-width: 100%; font: inherit; border-radius: var(--hp-radius); border: var(--hp-border); background: var(--hp-surface); color: var(--primary-text-color); padding: 7px 10px; line-height: 1.2; }
+      select { overflow: hidden; text-overflow: ellipsis; }
+      input { min-width: 0; }
+      button { cursor: pointer; border-color: var(--primary-color); background: var(--primary-color); color: var(--text-primary-color); font-weight: 700; white-space: normal; overflow-wrap: anywhere; }
       button.secondary { background: var(--hp-surface); color: var(--primary-text-color); border-color: var(--divider-color); }
       button.danger { background: var(--error-color, #db4437); border-color: var(--error-color, #db4437); color: white; }
       button[disabled] { opacity: .52; cursor: not-allowed; }
       button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
       .tabs { display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 4px; margin: 0 0 14px; border: var(--hp-border); border-radius: var(--hp-radius); background: var(--hp-surface-soft); }
-      .tab, .pill, .miniBtn { min-height: 36px; border-radius: calc(var(--hp-radius) - 2px); border-color: transparent; background: transparent; color: var(--primary-text-color); padding: 7px 11px; font-size: 13px; }
+      .tab, .pill, .miniBtn { min-height: 32px; border-radius: calc(var(--hp-radius) - 2px); border-color: transparent; background: transparent; color: var(--primary-text-color); padding: 6px 9px; font-size: 13px; }
       .tab.active, .pill.active { background: var(--primary-color); color: var(--text-primary-color); }
-      .summaryGrid { display: grid; grid-template-columns: repeat(5, minmax(140px, 1fr)); gap: 12px; margin: 0 0 var(--hp-gap); }
-      .metric { padding: 14px; min-width: 0; border-left: 4px solid transparent; }
+      .summaryGrid { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 10px; margin: 0 0 var(--hp-gap); }
+      .metric { padding: 12px; min-width: 0; border-left: 4px solid transparent; }
       .metric.primary { border-left-color: var(--primary-color); }
       .metric.warn { border-left-color: var(--warning-color, #ffa600); }
       .metric.badMetric { border-left-color: var(--error-color, #db4437); }
-      .metricValue { font-size: 28px; font-weight: 850; line-height: 1.05; overflow-wrap: anywhere; }
+      .metricValue { font-size: 24px; font-weight: 850; line-height: 1.05; overflow-wrap: anywhere; }
       .metricLabel { margin-top: 6px; color: var(--secondary-text-color); font-size: 13px; }
-      .card, .panel, .notice { padding: 16px; }
+      .card, .panel, .notice { padding: 14px; }
       .notice { border-left: 4px solid var(--success-color, #0b8043); margin-bottom: var(--hp-gap); }
       .notice.warn, .warn { border-left-color: var(--warning-color, #ffa600); }
       .notice.error, .error { border-left-color: var(--error-color, #db4437); }
       .notice.ok, .ok { border-left-color: var(--success-color, #0b8043); }
       .sectionTitle { font-size: 17px; font-weight: 800; margin: 0 0 8px; }
-      .layout { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); gap: var(--hp-gap); align-items: start; }
+      .layout { display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); gap: var(--hp-gap); align-items: start; }
       .deviceList { display: flex; flex-direction: column; gap: 8px; max-height: 68vh; overflow: auto; padding-right: 2px; }
       .deviceCard { width: 100%; text-align: left; background: var(--hp-surface); color: var(--primary-text-color); border: var(--hp-border); border-radius: var(--hp-radius); padding: 12px; cursor: pointer; }
       .deviceCard.active { border-color: var(--primary-color); box-shadow: inset 3px 0 0 var(--primary-color); }
       .chips { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 8px; }
-      .chip, .statusBadge { display: inline-flex; align-items: center; max-width: 100%; min-height: 24px; padding: 4px 8px; border-radius: 999px; border: var(--hp-border); background: var(--hp-surface-soft); font-size: 12px; line-height: 1.2; overflow-wrap: anywhere; }
+      .chip, .statusBadge { display: inline-flex; align-items: center; max-width: 100%; min-height: 22px; padding: 3px 7px; border-radius: 999px; border: var(--hp-border); background: var(--hp-surface-soft); font-size: 12px; line-height: 1.2; overflow-wrap: anywhere; white-space: normal; }
       .statusBadge.good { border-color: color-mix(in srgb, var(--success-color, #0b8043) 50%, var(--divider-color)); background: color-mix(in srgb, var(--success-color, #0b8043) 12%, var(--hp-surface)); }
       .statusBadge.bad { border-color: color-mix(in srgb, var(--error-color, #db4437) 55%, var(--divider-color)); background: color-mix(in srgb, var(--error-color, #db4437) 12%, var(--hp-surface)); }
       .statusBadge.warn, .warnChip { border-color: color-mix(in srgb, var(--warning-color, #ffa600) 60%, var(--divider-color)); background: color-mix(in srgb, var(--warning-color, #ffa600) 16%, var(--hp-surface)); }
       .hkDrop { border-color: var(--error-color, #db4437); background: color-mix(in srgb, var(--error-color, #db4437) 16%, var(--hp-surface)); color: var(--error-color, #db4437); font-weight: 850; }
-      .controlBar { padding: 12px; margin-bottom: var(--hp-gap); }
-      .controlBar label { display: flex; flex-direction: column; gap: 5px; min-width: 180px; color: var(--secondary-text-color); font-size: 12px; font-weight: 700; }
-      .controlBar input { flex: 1 1 320px; min-width: 220px; }
+      .controlBar { padding: 10px; margin-bottom: var(--hp-gap); align-items: end; }
+      .controlBar label { display: flex; flex-direction: column; gap: 3px; min-width: 130px; color: var(--secondary-text-color); font-size: 11px; font-weight: 700; }
+      .controlBar input { flex: 1 1 280px; min-width: 0; width: 100%; }
       .filterReset { align-self: end; white-space: nowrap; }
-      .tableWrap { overflow: auto; }
-      table { width: 100%; min-width: 1080px; border-collapse: collapse; }
-      th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--divider-color); vertical-align: top; }
+      .tableWrap { overflow-x: auto; overflow-y: hidden; max-width: 100%; overscroll-behavior-x: contain; }
+      table { width: 100%; min-width: 760px; border-collapse: collapse; table-layout: fixed; }
+      th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--divider-color); vertical-align: top; overflow-wrap: anywhere; word-break: normal; }
       th { position: sticky; top: 0; z-index: 1; color: var(--secondary-text-color); background: var(--hp-surface-soft); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
       tr:last-child td { border-bottom: 0; }
       .selectedRow td { background: color-mix(in srgb, var(--success-color, #0b8043) 10%, transparent); }
       .blockedRow td { opacity: .68; }
       .hkDropRow td { background: color-mix(in srgb, var(--error-color, #db4437) 8%, var(--hp-surface)); }
-      code, pre { background: var(--hp-surface-soft); border: var(--hp-border); border-radius: 6px; padding: 2px 5px; }
+      code, pre { background: var(--hp-surface-soft); border: var(--hp-border); border-radius: 6px; padding: 2px 5px; overflow-wrap: anywhere; white-space: normal; }
       pre { padding: 14px; overflow: auto; white-space: pre-wrap; }
       .good { color: var(--success-color, #0b8043); font-weight: 800; }
       .bad { color: var(--error-color, #db4437); font-weight: 800; }
@@ -420,13 +422,13 @@ class HomeKitPreviewPanel extends HTMLElement {
       .empty { text-align: center; padding: 26px; color: var(--secondary-text-color); }
       .hint { line-height: 1.45; }
       .hint p { margin: 6px 0 0; }
-      .formGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 12px; }
+      .formGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin-top: 12px; }
       .formGrid label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--secondary-text-color); }
       .checkboxRow { display: flex; align-items: center; gap: 8px; margin-top: 10px; color: var(--primary-text-color); }
       .checkboxRow input { min-width: unset; min-height: unset; }
       .proxySummary { display: grid; grid-template-columns: minmax(220px, 320px) 1fr; gap: var(--hp-gap); align-items: stretch; margin-top: 12px; }
       .homeTile { border: var(--hp-border); border-radius: var(--hp-radius); background: var(--hp-surface-soft); padding: 14px; min-height: 138px; display: flex; flex-direction: column; justify-content: space-between; }
-      .homeTileValue { font-size: 30px; font-weight: 850; line-height: 1.1; }
+      .homeTileValue { font-size: 26px; font-weight: 850; line-height: 1.1; overflow-wrap: anywhere; }
       .homeTileType { font-size: 13px; color: var(--secondary-text-color); }
       .homeTileMeta { display: flex; flex-direction: column; gap: 6px; line-height: 1.45; }
       .inlineMeta { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
@@ -437,13 +439,19 @@ class HomeKitPreviewPanel extends HTMLElement {
         .summaryGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       }
       @media (max-width: 620px) {
+        :host { padding: 10px; }
         .brandBlock { align-items: flex-start; }
         .appIcon { width: 40px; height: 40px; }
         h1 { font-size: 21px; }
         .summaryGrid { grid-template-columns: 1fr; }
-        input, .controlBar input, .controlBar label, .bridgeActions select { min-width: 100%; width: 100%; }
+        input, .controlBar input, .controlBar label, .bridgeActions select { min-width: 0; width: 100%; }
+        .controlBar { gap: 8px; }
         .filterReset { align-self: stretch; }
         .filterReset, .bridgeActions button { width: 100%; }
+        table { min-width: 680px; }
+        th, td { padding: 7px 8px; }
+        .tabs { display: flex; }
+        .tab { flex: 1 1 0; }
       }
     </style>`;
   }
