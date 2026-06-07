@@ -1,0 +1,3 @@
+scan:
+  name: Scan HomeKit Bridge exposure
+  description: Build a fresh preview of HomeKit Bridge entries and exposed entities, then optionally create a persistent notification.
