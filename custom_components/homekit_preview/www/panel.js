@@ -1,3 +1,5 @@
+const ICON_URL = "/homekit_preview_static/icon.svg";
+
 class HomeKitPreviewPanel extends HTMLElement {
   connectedCallback() {
     if (!this.shadowRoot) this.attachShadow({ mode: "open" });
@@ -59,7 +61,15 @@ class HomeKitPreviewPanel extends HTMLElement {
     return exposed.filter((entity) => {
       if (this._domainFilter && entity.domain !== this._domainFilter) return false;
       if (!q) return true;
-      return [entity.entity_id, entity.name, entity.domain, entity.area, entity.device, entity.state]
+      return [
+        entity.entity_id,
+        entity.name,
+        entity.domain,
+        entity.area,
+        entity.device,
+        entity.state,
+        entity.inclusion_reason,
+      ]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(q));
     });
@@ -78,6 +88,7 @@ class HomeKitPreviewPanel extends HTMLElement {
     const warnings = data.warnings || [];
     const filtered = this.filteredEntities(entry);
     const domains = this.domainsFor(entry);
+    const domainWideCount = entry?.domain_wide_include_count || 0;
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -85,7 +96,7 @@ class HomeKitPreviewPanel extends HTMLElement {
         .wrap { max-width: 1280px; margin: 0 auto; }
         .top { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:16px; }
         .titleRow { display:flex; align-items:center; gap:12px; }
-        .appIcon { width:44px; height:44px; border-radius:14px; background: var(--primary-color); display:grid; place-items:center; color: var(--text-primary-color); font-weight:800; box-shadow: var(--ha-card-box-shadow, none); }
+        .appIcon { width:44px; height:44px; border-radius:14px; display:block; box-shadow: var(--ha-card-box-shadow, none); }
         h1 { margin:0; font-size:28px; font-weight:700; }
         .sub { color: var(--secondary-text-color); margin-top:6px; }
         .controls { display:flex; align-items:center; justify-content:flex-end; gap:12px; flex-wrap:wrap; }
@@ -102,8 +113,12 @@ class HomeKitPreviewPanel extends HTMLElement {
         .sectionTitle { font-size:18px; font-weight:750; margin: 22px 0 8px; }
         .chips { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
         .chip { font-size:12px; padding:5px 8px; border-radius:999px; background: var(--secondary-background-color); border:1px solid var(--divider-color); }
+        .warnChip { border-color: var(--warning-color, #ffa600); background: color-mix(in srgb, var(--warning-color, #ffa600) 18%, var(--card-background-color)); }
+        .domainHint { margin-top:14px; padding:14px; border-radius:14px; background: color-mix(in srgb, var(--warning-color, #ffa600) 12%, var(--card-background-color)); border:1px solid color-mix(in srgb, var(--warning-color, #ffa600) 45%, var(--divider-color)); }
+        .domainHintTitle { font-weight:800; margin-bottom:6px; }
+        .domainHintBody { color: var(--primary-text-color); line-height:1.45; }
         .tableWrap { overflow:auto; border-radius:16px; border:1px solid var(--divider-color); background: var(--card-background-color); }
-        table { width:100%; border-collapse: collapse; min-width: 880px; }
+        table { width:100%; border-collapse: collapse; min-width: 980px; }
         th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--divider-color); vertical-align:top; }
         th { font-size:12px; text-transform:uppercase; color: var(--secondary-text-color); background: var(--secondary-background-color); letter-spacing:.04em; position: sticky; top: 0; z-index: 1; }
         tr:last-child td { border-bottom:0; }
@@ -111,6 +126,7 @@ class HomeKitPreviewPanel extends HTMLElement {
         .muted { color: var(--secondary-text-color); }
         .good { color: var(--success-color, #0b8043); font-weight:700; }
         .bad { color: var(--error-color, #db4437); font-weight:700; }
+        .reasonWarn { color: var(--warning-color, #ffa600); font-weight:800; }
         .toolbar { display:flex; gap:10px; flex-wrap:wrap; margin: 16px 0; align-items:center; justify-content:space-between; }
         .toolbarLeft, .toolbarRight { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
         .empty { padding: 24px; text-align:center; }
@@ -119,7 +135,7 @@ class HomeKitPreviewPanel extends HTMLElement {
       <div class="wrap">
         <div class="top">
           <div class="titleRow">
-            <div class="appIcon">HK</div>
+            <img class="appIcon" src="${ICON_URL}" alt="">
             <div>
               <h1>HomeKit Preview</h1>
               <div class="sub">See exactly what each Home Assistant HomeKit entry is configured to expose.</div>
@@ -140,6 +156,7 @@ class HomeKitPreviewPanel extends HTMLElement {
           <div class="card"><div class="num">${data.entry_count ?? 0}</div><div class="label">HomeKit entries</div></div>
           <div class="card"><div class="num">${data.total_exposed ?? 0}</div><div class="label">Total exposed now</div></div>
           <div class="card"><div class="num">${entry?.exposed_count ?? 0}</div><div class="label">Selected exposes</div></div>
+          <div class="card ${domainWideCount ? "warn" : ""}"><div class="num">${domainWideCount}</div><div class="label">Whole-domain includes</div></div>
           <div class="card"><div class="num good">${entry?.available_count ?? 0}</div><div class="label">Available</div></div>
           <div class="card"><div class="num bad">${entry?.unavailable_count ?? 0}</div><div class="label">Unavailable/unknown</div></div>
           <div class="card"><div class="num">${entry?.mode ? this.escape(entry.mode) : "—"}</div><div class="label">Mode</div></div>
@@ -182,8 +199,10 @@ class HomeKitPreviewPanel extends HTMLElement {
       ["Exclude globs", entry.exclude_entity_globs],
     ].filter(([, values]) => values && values.length);
 
+    const domainWideIncludes = entry.domain_wide_includes || [];
+    const domainWideDomains = new Set(domainWideIncludes.map((item) => item.domain));
     const domainChips = Object.entries(entry.domain_counts || {})
-      .map(([domain, count]) => `<span class="chip"><b>${this.escape(domain)}</b>: ${count}</span>`)
+      .map(([domain, count]) => `<span class="chip ${domainWideDomains.has(domain) ? "warnChip" : ""}"><b>${this.escape(domain)}</b>: ${count}${domainWideDomains.has(domain) ? " · ALL" : ""}</span>`)
       .join("");
 
     return `
@@ -194,6 +213,7 @@ class HomeKitPreviewPanel extends HTMLElement {
           ${filters.length ? filters.map(([label, values]) => `<span class="chip"><b>${label}:</b> ${values.map((value) => this.escape(value)).join(", ")}</span>`).join("") : `<span class="chip">No explicit filters found</span>`}
         </div>
         ${domainChips ? `<div class="chips">${domainChips}</div>` : ""}
+        ${this.renderDomainWideIncludes(domainWideIncludes)}
       </div>
 
       <div class="toolbar">
@@ -213,7 +233,7 @@ class HomeKitPreviewPanel extends HTMLElement {
       ${filtered.length ? `
         <div class="tableWrap">
           <table>
-            <thead><tr><th>Entity</th><th>Name</th><th>Domain</th><th>Area</th><th>Device</th><th>State</th><th>Available</th></tr></thead>
+            <thead><tr><th>Entity</th><th>Name</th><th>Domain</th><th>Area</th><th>Device</th><th>State</th><th>Available</th><th>Why included</th></tr></thead>
             <tbody>
               ${filtered.map((entity) => `
                 <tr>
@@ -224,6 +244,7 @@ class HomeKitPreviewPanel extends HTMLElement {
                   <td>${this.escape(entity.device || "")}</td>
                   <td><code>${this.escape(entity.state || "")}</code></td>
                   <td class="${entity.available ? "good" : "bad"}">${entity.available ? "yes" : "no"}</td>
+                  <td class="${entity.inclusion_reason === "domain-wide include" ? "reasonWarn" : ""}">${this.escape(entity.inclusion_reason || "")}</td>
                 </tr>
               `).join("")}
             </tbody>
@@ -231,6 +252,20 @@ class HomeKitPreviewPanel extends HTMLElement {
         </div>
         ${entry.truncated ? `<p class="muted">Backend response truncated at 500 entities for this entry; ${entry.truncated_count || 0} more were counted but not listed.</p>` : ""}
       ` : `<div class="card warn">No entities match the current search/filter for this HomeKit entry.</div>`}
+    `;
+  }
+
+  renderDomainWideIncludes(domainWideIncludes) {
+    if (!domainWideIncludes.length) return "";
+    return `
+      <div class="domainHint">
+        <div class="domainHintTitle">⚠ Whole-domain include active</div>
+        <div class="domainHintBody">
+          ${domainWideIncludes.map((item) => `
+            <p><b>${this.escape(item.domain)}</b>: ${this.escape(item.message)}</p>
+          `).join("")}
+        </div>
+      </div>
     `;
   }
 
