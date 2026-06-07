@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 
+from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -37,17 +38,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def handle_scan(call: ServiceCall) -> None:
         """Refresh preview data and optionally publish a notification."""
-        await coordinator.async_request_refresh()
-        create_notification = entry.options.get(
-            CONF_CREATE_NOTIFICATION,
-            entry.data.get(CONF_CREATE_NOTIFICATION, DEFAULT_CREATE_NOTIFICATION),
-        )
-        if create_notification:
-            hass.components.persistent_notification.async_create(
-                markdown_preview(coordinator.data),
-                title="HomeKit Preview",
-                notification_id="homekit_preview_latest",
+        try:
+            await coordinator.async_request_refresh()
+            create_notification = entry.options.get(
+                CONF_CREATE_NOTIFICATION,
+                entry.data.get(CONF_CREATE_NOTIFICATION, DEFAULT_CREATE_NOTIFICATION),
             )
+            if create_notification:
+                persistent_notification.async_create(
+                    hass,
+                    markdown_preview(coordinator.data),
+                    title="HomeKit Preview",
+                    notification_id="homekit_preview_latest",
+                )
+        except Exception:  # noqa: BLE001 - surface full traceback in HA logs.
+            _LOGGER.exception("HomeKit Preview scan failed")
+            raise
 
     hass.services.async_register(DOMAIN, SCAN_SERVICE, handle_scan)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
