@@ -3,8 +3,8 @@ from __future__ import annotations
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
-from .const import DATA_COORDINATOR, DATA_ENTRIES, DOMAIN
-from .preview import async_apply_filter_to_homekit_entry
+from .const import DATA_COORDINATOR, DATA_ENTRIES, DOMAIN, HOMEKIT_DOMAIN
+from .preview import normalize_filter
 
 
 def _admin_allowed(request) -> bool:
@@ -24,6 +24,20 @@ def _first_runtime(hass: HomeAssistant):
 def _runtime_for_any_entry(hass: HomeAssistant):
     """Return a runtime that can refresh preview data."""
     return _first_runtime(hass)
+
+
+async def _apply_filter(hass: HomeAssistant, entry_id: str, raw_filter: dict) -> dict:
+    """Apply a HomeKit Bridge filter and reload that HomeKit entry."""
+    entry = hass.config_entries.async_get_entry(entry_id)
+    if entry is None or entry.domain != HOMEKIT_DOMAIN:
+        raise ValueError("Selected config entry is not a HomeKit entry")
+
+    normalized = normalize_filter(raw_filter)
+    options = dict(entry.options or {})
+    options["filter"] = normalized
+    hass.config_entries.async_update_entry(entry, options=options)
+    await hass.config_entries.async_reload(entry.entry_id)
+    return normalized
 
 
 class HomeKitPreviewDataView(HomeAssistantView):
@@ -65,14 +79,8 @@ class HomeKitPreviewScanView(HomeAssistantView):
         return await self.post(request)
 
 
-class HomeKitPreviewApplyView(HomeAssistantView):
-    """Apply a draft filter to a HomeKit Bridge entry."""
-
-    url = "/api/homekit_preview/apply"
-    name = "api:homekit_preview:apply"
-    requires_auth = True
-
-    async def post(self, request):
+class _ApplyFilterMixin:
+    async def _handle_apply(self, request):
         hass = request.app["hass"]
         runtime = _runtime_for_any_entry(hass)
         if runtime is None:
@@ -90,11 +98,7 @@ class HomeKitPreviewApplyView(HomeAssistantView):
             return self.json({"error": "filter must be an object"}, status_code=400)
 
         try:
-            applied_filter = await async_apply_filter_to_homekit_entry(
-                hass,
-                entry_id,
-                raw_filter,
-            )
+            applied_filter = await _apply_filter(hass, entry_id, raw_filter)
         except Exception as err:  # noqa: BLE001 - return the useful error to the panel.
             return self.json(
                 {"error": f"{type(err).__name__}: {err}"},
@@ -108,8 +112,31 @@ class HomeKitPreviewApplyView(HomeAssistantView):
         return self.json(data)
 
 
+class HomeKitPreviewApplyView(_ApplyFilterMixin, HomeAssistantView):
+    """Apply a draft filter to a HomeKit Bridge entry."""
+
+    url = "/api/homekit_preview/apply"
+    name = "api:homekit_preview:apply"
+    requires_auth = True
+
+    async def post(self, request):
+        return await self._handle_apply(request)
+
+
+class HomeKitPreviewUpdateFilterView(_ApplyFilterMixin, HomeAssistantView):
+    """Compatibility endpoint used by the sidebar panel."""
+
+    url = "/api/homekit_preview/update_filter"
+    name = "api:homekit_preview:update_filter"
+    requires_auth = True
+
+    async def post(self, request):
+        return await self._handle_apply(request)
+
+
 def async_register_api(hass: HomeAssistant) -> None:
     """Register HomeKit Preview API views."""
     hass.http.register_view(HomeKitPreviewDataView)
     hass.http.register_view(HomeKitPreviewScanView)
     hass.http.register_view(HomeKitPreviewApplyView)
+    hass.http.register_view(HomeKitPreviewUpdateFilterView)
