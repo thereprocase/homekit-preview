@@ -3,7 +3,7 @@
   "name": "HomeKit Preview",
   "codeowners": ["@thereprocase"],
   "config_flow": true,
-  "dependencies": ["frontend", "homekit", "http"],
+  "dependencies": ["frontend", "homekit", "http", "panel_custom"],
   "documentation": "https://github.com/thereprocase/homekit-preview",
   "integration_type": "helper",
   "iot_class": "local_polling",
