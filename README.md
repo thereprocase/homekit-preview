@@ -1,26 +1,25 @@
 # HomeKit Preview
 
-<img src="custom_components/homekit_preview/www/icon.svg" alt="HomeKit Preview icon" width="96" height="96" />
+HomeKit Preview is a Home Assistant custom integration for making HomeKit Bridge sane.
 
-HomeKit Preview is a Home Assistant custom integration that answers the question Home Assistant's HomeKit Bridge UI should answer directly:
+It answers two questions:
 
-> What entities is this HomeKit Bridge probably going to expose to Apple Home?
+> What is this HomeKit Bridge exposing right now?
 
-It does **not** replace HomeKit Bridge and it does **not** talk to Apple Home. It reads Home Assistant's HomeKit config entries and live entity states, computes the effective include/exclude filter, then gives you an actual sidebar app.
+and:
+
+> How do I add exactly the entities I want without accidentally adding every switch/camera/sensor in the house?
 
 ## What it gives you
 
 - A **HomeKit Preview** sidebar panel.
-- A bridge/accessory dropdown.
-- A **Scan / Refresh** button.
-- Search and domain filtering inside the selected bridge.
-- Per-bridge exposed entity table with entity ID, name, domain, area, device, current state, and availability.
-- Include/exclude filter chips and per-domain counts.
-- Missing-entity warnings when a HomeKit entry explicitly includes an entity that no longer exists.
-- A `button.scan_homekit_preview` entity for dashboards.
-- A `sensor.homekit_preview` entity with counts and preview data in attributes.
-- A `homekit_preview.scan` action/service for automations.
-- A persistent notification containing the same preview in Markdown.
+- Live preview of every HomeKit Bridge / accessory entry.
+- Clear warnings for whole-domain includes such as “ALL switch domain”.
+- HomeKit-style domain semantics: a domain include means all entities in that domain unless specific entities in that domain narrow it.
+- A **Device Picker** flow: **Room → Device → check the entities you want → Apply exact list**.
+- Room filtering and search.
+- A backend write endpoint that applies an exact `include_entities` list to the selected HomeKit entry and reloads it.
+- A `sensor.homekit_preview`, `button.scan_homekit_preview`, and `homekit_preview.scan` action/service.
 
 ## Install with HACS as a custom repository
 
@@ -31,47 +30,25 @@ It does **not** replace HomeKit Bridge and it does **not** talk to Apple Home. I
 5. Download **HomeKit Preview**.
 6. Restart Home Assistant.
 7. Go to **Settings → Devices & services → Add integration → HomeKit Preview**.
-8. Open the **HomeKit Preview** sidebar item.
-9. Hit **Scan / Refresh**.
-
-## Updating from HACS
-
-Use **HACS → HomeKit Preview → ⋮ → Redownload**, then restart Home Assistant. Browser cache can be annoying, so the panel JS path is cache-busted in the integration setup.
-
-## Manual install
-
-Copy this folder:
-
-```text
-custom_components/homekit_preview
-```
-
-into:
-
-```text
-/config/custom_components/homekit_preview
-```
-
-Restart Home Assistant, then add the integration from the UI.
+8. Open **HomeKit Preview** in the sidebar.
 
 ## How to use
 
-After setup, you should see **HomeKit Preview** in the left sidebar.
+Open **HomeKit Preview → Device Picker**.
 
-The panel shows:
+1. Pick the HomeKit Bridge entry at the top.
+2. Pick a room.
+3. Pick a device.
+4. Check the entities you want in Apple Home.
+5. Move to the next device.
+6. Click **Apply exact list to HomeKit Bridge**.
 
-- all HomeKit Bridge / accessory-mode entries it can find,
-- the selected entry's port and guessed mode,
-- include/exclude filters,
-- the entities that Apple Home will probably see,
-- the area/device/state/availability of each exposed entity.
+The apply step intentionally writes an exact `include_entities` filter and clears domain-wide includes, so the bridge exposes exactly the selected entities.
 
-Use **Scan / Refresh** after changing HomeKit Bridge options.
+## Why this exists
+
+Home Assistant’s HomeKit Bridge options are easy to misread. Selecting a domain can mean “all entities in this domain,” and the entity selection screen can make it unclear when you are narrowing a domain versus exposing the whole thing. This integration makes the live result visible and gives you an entity-by-entity picker.
 
 ## Limitations
 
-This is a Home Assistant-side preview, not a perfect Apple Home emulator. Apple may still rename, re-room, cache, hide, or otherwise spiritually damage things. This integration only tells you what Home Assistant appears configured to offer.
-
-## Development status
-
-Early proof-of-useful. Built specifically because HomeKit Bridge's UI makes it way too hard to answer the simple question: "what will my spouse see after scanning this QR code?"
+This is still a Home Assistant-side preview, not Apple Home itself. Apple may cache, rename, hide, or re-room accessories after pairing. Home Assistant remains the source of truth for the bridge filter.
