@@ -66,9 +66,17 @@ def _read_filter(raw: dict[str, Any]) -> FilterConfig:
     """Read HomeKit include/exclude filters from several possible shapes."""
     filt = raw.get("filter") or {}
     source = {**filt, **raw}
+
+    include_entities = _as_set(source.get("include_entities"))
+
+    # Accessory-mode HomeKit config entries often represent one exported object
+    # with entity_id rather than the normal bridge include/exclude filters.
+    include_entities |= _as_set(source.get("entity_id"))
+    include_entities |= _as_set(source.get("entities"))
+
     return FilterConfig(
         include_domains=_as_set(source.get("include_domains")),
-        include_entities=_as_set(source.get("include_entities")),
+        include_entities=include_entities,
         include_entity_globs=_as_set(source.get("include_entity_globs")),
         exclude_domains=_as_set(source.get("exclude_domains")),
         exclude_entities=_as_set(source.get("exclude_entities")),
@@ -121,6 +129,8 @@ def _entry_mode(entry, exposed: list[dict[str, Any]]) -> str:
     mode = options.get("mode") or data.get("mode") or options.get("type") or data.get("type")
     if mode:
         return str(mode)
+    if data.get("entity_id") or options.get("entity_id"):
+        return "probably accessory"
     if len(exposed) == 1 and exposed[0].get("domain") in ACCESSORY_HINT_DOMAINS:
         return "probably accessory"
     return "probably bridge"
