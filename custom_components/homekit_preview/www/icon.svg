@@ -1,15 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="HomeKit Preview icon">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="HomeKit Preview">
   <defs>
-    <linearGradient id="bg" x1="40" y1="28" x2="216" y2="228" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#41BDF5"/>
-      <stop offset="1" stop-color="#18BC9C"/>
+    <linearGradient id="g" x1="16" x2="112" y1="112" y2="16" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#18a058"/>
+      <stop offset="1" stop-color="#03a9f4"/>
     </linearGradient>
   </defs>
-  <rect x="18" y="18" width="220" height="220" rx="54" fill="url(#bg)"/>
-  <path d="M58 122 128 66l70 56v76a12 12 0 0 1-12 12h-36v-54h-44v54H70a12 12 0 0 1-12-12v-76Z" fill="white" opacity="0.96"/>
-  <path d="M72 124 128 79l56 45" fill="none" stroke="#0B2742" stroke-opacity="0.18" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="128" cy="135" r="28" fill="#0B2742" opacity="0.18"/>
-  <circle cx="128" cy="135" r="15" fill="#0B2742" opacity="0.35"/>
-  <path d="M178 78v35h35" fill="none" stroke="white" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M212 79 178 113" fill="none" stroke="white" stroke-width="14" stroke-linecap="round"/>
+  <rect width="128" height="128" rx="28" fill="url(#g)"/>
+  <path d="M25 61 64 29l39 32v39a8 8 0 0 1-8 8H33a8 8 0 0 1-8-8V61Z" fill="white" opacity=".96"/>
+  <path d="M42 76h44" stroke="#0b3954" stroke-width="8" stroke-linecap="round"/>
+  <path d="M42 92h30" stroke="#0b3954" stroke-width="8" stroke-linecap="round" opacity=".75"/>
+  <circle cx="91" cy="38" r="16" fill="#0b3954"/>
+  <path d="m84 38 5 5 10-11" fill="none" stroke="white" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
