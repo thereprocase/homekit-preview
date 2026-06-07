@@ -1,17 +1,22 @@
 # HomeKit Preview
 
+<img src="custom_components/homekit_preview/www/icon.svg" alt="HomeKit Preview icon" width="96" height="96" />
+
 HomeKit Preview is a Home Assistant custom integration that answers the question Home Assistant's HomeKit Bridge UI should answer directly:
 
 > What entities is this HomeKit Bridge probably going to expose to Apple Home?
 
-It does **not** replace HomeKit Bridge and it does **not** talk to Apple Home. It reads Home Assistant's HomeKit config entries and entity registry, computes the effective include/exclude filter, then gives you an actual sidebar app.
+It does **not** replace HomeKit Bridge and it does **not** talk to Apple Home. It reads Home Assistant's HomeKit config entries and live entity states, computes the effective include/exclude filter, then gives you an actual sidebar app.
 
 ## What it gives you
 
 - A **HomeKit Preview** sidebar panel.
 - A bridge/accessory dropdown.
 - A **Scan / Refresh** button.
-- A per-bridge exposed entity table.
+- Search and domain filtering inside the selected bridge.
+- Per-bridge exposed entity table with entity ID, name, domain, area, device, current state, and availability.
+- Include/exclude filter chips and per-domain counts.
+- Missing-entity warnings when a HomeKit entry explicitly includes an entity that no longer exists.
 - A `button.scan_homekit_preview` entity for dashboards.
 - A `sensor.homekit_preview` entity with counts and preview data in attributes.
 - A `homekit_preview.scan` action/service for automations.
@@ -28,6 +33,10 @@ It does **not** replace HomeKit Bridge and it does **not** talk to Apple Home. I
 7. Go to **Settings → Devices & services → Add integration → HomeKit Preview**.
 8. Open the **HomeKit Preview** sidebar item.
 9. Hit **Scan / Refresh**.
+
+## Updating from HACS
+
+Use **HACS → HomeKit Preview → ⋮ → Redownload**, then restart Home Assistant. Browser cache can be annoying, so the panel JS path is cache-busted in the integration setup.
 
 ## Manual install
 
@@ -55,7 +64,7 @@ The panel shows:
 - the selected entry's port and guessed mode,
 - include/exclude filters,
 - the entities that Apple Home will probably see,
-- availability for each entity.
+- the area/device/state/availability of each exposed entity.
 
 Use **Scan / Refresh** after changing HomeKit Bridge options.
 
