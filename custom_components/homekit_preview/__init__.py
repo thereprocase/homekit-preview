@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from homeassistant.components import persistent_notification
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
+from .api import async_register_api
 from .const import (
     CONF_CREATE_NOTIFICATION,
     DATA_COORDINATOR,
@@ -18,6 +21,43 @@ from .preview import build_preview, markdown_preview
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = ["sensor", "button"]
+PANEL_URL_PATH = "homekit-preview"
+PANEL_JS_URL = "/homekit_preview_static/panel.js"
+
+
+async def _async_register_static_path(hass: HomeAssistant) -> None:
+    """Serve bundled panel assets."""
+    static_dir = Path(__file__).parent / "www"
+    try:
+        await hass.http.async_register_static_paths(
+            [StaticPathConfig("/homekit_preview_static", str(static_dir), False)]
+        )
+    except AttributeError:
+        # Older HA fallback.
+        hass.http.register_static_path(
+            "/homekit_preview_static",
+            str(static_dir),
+            cache_headers=False,
+        )
+
+
+def _register_panel(hass: HomeAssistant) -> None:
+    """Register the HomeKit Preview sidebar panel."""
+    try:
+        from homeassistant.components import panel_custom
+
+        panel_custom.async_register_panel(
+            hass,
+            webcomponent_name="homekit-preview-panel",
+            frontend_url_path=PANEL_URL_PATH,
+            module_url=PANEL_JS_URL,
+            sidebar_title="HomeKit Preview",
+            sidebar_icon="mdi:home-export-outline",
+            require_admin=True,
+            config={},
+        )
+    except Exception:  # noqa: BLE001 - sidebar failure should not break the helper.
+        _LOGGER.exception("Failed to register HomeKit Preview sidebar panel")
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -63,6 +103,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await async_scan_and_notify()
 
     hass.services.async_register(DOMAIN, SCAN_SERVICE, handle_scan)
+    await _async_register_static_path(hass)
+    async_register_api(hass)
+    _register_panel(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
