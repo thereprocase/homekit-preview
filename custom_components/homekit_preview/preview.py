@@ -136,6 +136,45 @@ def _included(entity_id: str, domain: str, fc: FilterConfig) -> bool:
     return True
 
 
+def _inclusion_reason(entity_id: str, domain: str, fc: FilterConfig) -> str:
+    """Explain why an entity passed the include side of the filter."""
+    if entity_id in fc.include_entities:
+        return "explicit entity"
+    if _match_any_glob(entity_id, fc.include_entity_globs):
+        return "include glob"
+    if domain in fc.include_domains:
+        return "domain-wide include"
+    if not (fc.include_domains or fc.include_entities or fc.include_entity_globs):
+        return "no include filter"
+    return "included by filter"
+
+
+def _domain_wide_include_hints(
+    fc: FilterConfig, domain_counts: dict[str, int]
+) -> list[dict[str, Any]]:
+    """Return UI hints for domains that are currently included wholesale."""
+    hints: list[dict[str, Any]] = []
+    for domain in sorted(fc.include_domains):
+        count = domain_counts.get(domain, 0)
+        pretty = domain.replace("_", " ")
+        hints.append(
+            {
+                "domain": domain,
+                "domain_name": pretty.title(),
+                "count": count,
+                "message": (
+                    f"ALL {pretty} entities are included because this bridge includes "
+                    f"the {domain} domain. This usually happens when Bridge settings "
+                    f"select the {pretty.title()} domain but no {domain} entity is "
+                    "selected on the entity-selection screen. To filter this domain, "
+                    "return to Bridge settings and add at least one entity of this "
+                    "domain type."
+                ),
+            }
+        )
+    return hints
+
+
 def _area_name(area_reg, area_id: str | None) -> str | None:
     if not area_id:
         return None
@@ -209,6 +248,7 @@ def build_preview(hass: HomeAssistant) -> dict[str, Any]:
             domain = entity_id.split(".", 1)[0]
             if _included(entity_id, domain, fc):
                 preview = _entity_preview(hass, state, entity_reg, device_reg, area_reg)
+                preview["inclusion_reason"] = _inclusion_reason(entity_id, domain, fc)
                 exposed.append(preview)
                 domain_counts[domain] = domain_counts.get(domain, 0) + 1
 
@@ -224,6 +264,7 @@ def build_preview(hass: HomeAssistant) -> dict[str, Any]:
         available_count = sum(1 for item in exposed if item["available"])
         unavailable_count = len(exposed) - available_count
         total += len(exposed)
+        domain_wide_includes = _domain_wide_include_hints(fc, domain_counts)
 
         entries.append(
             {
@@ -241,6 +282,8 @@ def build_preview(hass: HomeAssistant) -> dict[str, Any]:
                 "available_count": available_count,
                 "unavailable_count": unavailable_count,
                 "domain_counts": dict(sorted(domain_counts.items())),
+                "domain_wide_includes": domain_wide_includes,
+                "domain_wide_include_count": len(domain_wide_includes),
                 "missing_includes": missing_includes,
                 "exposed_entities": exposed[:MAX_EXPOSED_PER_ENTRY],
                 "truncated": len(exposed) > MAX_EXPOSED_PER_ENTRY,
@@ -284,6 +327,13 @@ def markdown_preview(data: dict[str, Any] | None) -> str:
             f"Exposed: **{entry.get('exposed_count', 0)}** — Available: **{entry.get('available_count', 0)}** — Unavailable/unknown: **{entry.get('unavailable_count', 0)}**"
         )
 
+        domain_wide_includes = entry.get("domain_wide_includes") or []
+        if domain_wide_includes:
+            lines.append("")
+            lines.append("### Whole-domain includes")
+            for hint in domain_wide_includes:
+                lines.append(f"- **{hint.get('domain')}**: {hint.get('message')}")
+
         for label, key in (
             ("Included domains", "include_domains"),
             ("Included entities", "include_entities"),
@@ -299,11 +349,11 @@ def markdown_preview(data: dict[str, Any] | None) -> str:
         exposed = entry.get("exposed_entities") or []
         if exposed:
             lines.append("")
-            lines.append("| Entity | Name | Domain | Area | State | Available |")
-            lines.append("|---|---|---|---|---|---|")
+            lines.append("| Entity | Name | Domain | Area | State | Available | Why included |")
+            lines.append("|---|---|---|---|---|---|---|")
             for ent in exposed:
                 lines.append(
-                    f"| `{ent.get('entity_id')}` | {ent.get('name') or ''} | `{ent.get('domain')}` | {ent.get('area') or ''} | `{ent.get('state')}` | {ent.get('available')} |"
+                    f"| `{ent.get('entity_id')}` | {ent.get('name') or ''} | `{ent.get('domain')}` | {ent.get('area') or ''} | `{ent.get('state')}` | {ent.get('available')} | {ent.get('inclusion_reason') or ''} |"
                 )
             if entry.get("truncated"):
                 lines.append("")
