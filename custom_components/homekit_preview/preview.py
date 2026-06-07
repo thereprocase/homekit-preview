@@ -50,6 +50,15 @@ HOMEKIT_MODE_ACCESSORY = "accessory"
 HOMEKIT_MODE_BRIDGE = "bridge"
 UNAVAILABLE_STATES = {"unavailable", "unknown"}
 MAX_EXPOSED_PER_ENTRY = 500
+MAX_CANDIDATES_PER_ENTRY = 1500
+FILTER_KEYS = (
+    "include_domains",
+    "include_entities",
+    "include_entity_globs",
+    "exclude_domains",
+    "exclude_entities",
+    "exclude_entity_globs",
+)
 
 
 @dataclass(slots=True)
@@ -107,6 +116,17 @@ def _read_filter(raw: dict[str, Any]) -> FilterConfig:
     )
 
 
+def _filter_payload(fc: FilterConfig) -> dict[str, list[str]]:
+    return {
+        "include_domains": sorted(fc.include_domains),
+        "include_entities": sorted(fc.include_entities),
+        "include_entity_globs": sorted(fc.include_entity_globs),
+        "exclude_domains": sorted(fc.exclude_domains),
+        "exclude_entities": sorted(fc.exclude_entities),
+        "exclude_entity_globs": sorted(fc.exclude_entity_globs),
+    }
+
+
 def _match_any_glob(entity_id: str, globs: set[str]) -> bool:
     return any(fnmatch.fnmatch(entity_id, pattern) for pattern in globs)
 
@@ -147,6 +167,21 @@ def _inclusion_reason(entity_id: str, domain: str, fc: FilterConfig) -> str:
     if not (fc.include_domains or fc.include_entities or fc.include_entity_globs):
         return "no include filter"
     return "included by filter"
+
+
+def _exclusion_reason(entity_id: str, domain: str, fc: FilterConfig) -> str:
+    """Explain why an entity is not currently exposed."""
+    if domain not in SUPPORTED_HOMEKIT_DOMAINS:
+        return "unsupported domain"
+    if domain in fc.exclude_domains:
+        return "excluded domain"
+    if entity_id in fc.exclude_entities:
+        return "excluded entity"
+    if _match_any_glob(entity_id, fc.exclude_entity_globs):
+        return "excluded by glob"
+    if fc.include_domains or fc.include_entities or fc.include_entity_globs:
+        return "not included"
+    return "not exposed"
 
 
 def _domain_wide_include_hints(
@@ -242,13 +277,27 @@ def build_preview(hass: HomeAssistant) -> dict[str, Any]:
         fc = _read_filter(payload)
 
         exposed = []
+        candidates = []
         domain_counts: dict[str, int] = {}
+        candidate_domain_counts: dict[str, int] = {}
         for state in states:
             entity_id = state.entity_id
             domain = entity_id.split(".", 1)[0]
-            if _included(entity_id, domain, fc):
-                preview = _entity_preview(hass, state, entity_reg, device_reg, area_reg)
-                preview["inclusion_reason"] = _inclusion_reason(entity_id, domain, fc)
+            if domain not in SUPPORTED_HOMEKIT_DOMAINS:
+                continue
+
+            preview = _entity_preview(hass, state, entity_reg, device_reg, area_reg)
+            included_now = _included(entity_id, domain, fc)
+            preview["currently_exposed"] = included_now
+            preview["inclusion_reason"] = (
+                _inclusion_reason(entity_id, domain, fc)
+                if included_now
+                else _exclusion_reason(entity_id, domain, fc)
+            )
+            candidates.append(preview)
+            candidate_domain_counts[domain] = candidate_domain_counts.get(domain, 0) + 1
+
+            if included_now:
                 exposed.append(preview)
                 domain_counts[domain] = domain_counts.get(domain, 0) + 1
 
@@ -272,6 +321,7 @@ def build_preview(hass: HomeAssistant) -> dict[str, Any]:
                 "title": title,
                 "port": payload.get("port"),
                 "mode": _entry_mode(entry, payload, exposed),
+                "filter": _filter_payload(fc),
                 "include_domains": sorted(fc.include_domains),
                 "include_entities": sorted(fc.include_entities),
                 "include_entity_globs": sorted(fc.include_entity_globs),
@@ -282,12 +332,17 @@ def build_preview(hass: HomeAssistant) -> dict[str, Any]:
                 "available_count": available_count,
                 "unavailable_count": unavailable_count,
                 "domain_counts": dict(sorted(domain_counts.items())),
+                "candidate_domain_counts": dict(sorted(candidate_domain_counts.items())),
+                "candidate_count": len(candidates),
                 "domain_wide_includes": domain_wide_includes,
                 "domain_wide_include_count": len(domain_wide_includes),
                 "missing_includes": missing_includes,
                 "exposed_entities": exposed[:MAX_EXPOSED_PER_ENTRY],
+                "candidate_entities": candidates[:MAX_CANDIDATES_PER_ENTRY],
                 "truncated": len(exposed) > MAX_EXPOSED_PER_ENTRY,
                 "truncated_count": max(0, len(exposed) - MAX_EXPOSED_PER_ENTRY),
+                "candidates_truncated": len(candidates) > MAX_CANDIDATES_PER_ENTRY,
+                "candidates_truncated_count": max(0, len(candidates) - MAX_CANDIDATES_PER_ENTRY),
             }
         )
 
