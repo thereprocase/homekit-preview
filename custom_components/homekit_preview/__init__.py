@@ -21,48 +21,52 @@ from .preview import build_preview, markdown_preview
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = ["sensor", "button"]
 PANEL_URL_PATH = "homekit-preview"
-PANEL_JS_URL = "/homekit_preview_static/panel.js?v=0.3.0"
+PANEL_JS_URL = "/homekit_preview_static/panel.js?v=0.5.0"
+STATIC_URL_PATH = "/homekit_preview_static"
 
 
 async def _async_register_static_path(hass: HomeAssistant) -> None:
     """Serve bundled panel assets."""
     static_dir = Path(__file__).parent / "www"
-
-    # StaticPathConfig moved around across HA releases. Import it lazily so a
-    # missing class cannot prevent the config flow from loading.
     try:
         from homeassistant.components.http import StaticPathConfig
 
         await hass.http.async_register_static_paths(
-            [StaticPathConfig("/homekit_preview_static", str(static_dir), False)]
+            [StaticPathConfig(STATIC_URL_PATH, str(static_dir), False)]
         )
         return
-    except (ImportError, AttributeError, TypeError):
+    except (ImportError, AttributeError, TypeError, RuntimeError, ValueError):
         pass
 
-    hass.http.register_static_path(
-        "/homekit_preview_static",
-        str(static_dir),
-        cache_headers=False,
-    )
+    try:
+        hass.http.register_static_path(
+            STATIC_URL_PATH,
+            str(static_dir),
+            cache_headers=False,
+        )
+    except (RuntimeError, ValueError):
+        _LOGGER.debug("HomeKit Preview static path was already registered")
 
 
-def _register_panel(hass: HomeAssistant) -> None:
+async def _async_register_panel(hass: HomeAssistant) -> None:
     """Register the HomeKit Preview sidebar panel."""
     try:
-        from homeassistant.components import panel_custom
+        from homeassistant.components import frontend, panel_custom
 
-        hass.async_create_task(
-            panel_custom.async_register_panel(
-                hass,
-                webcomponent_name="homekit-preview-panel",
-                frontend_url_path=PANEL_URL_PATH,
-                module_url=PANEL_JS_URL,
-                sidebar_title="HomeKit Preview",
-                sidebar_icon="mdi:home-export-outline",
-                require_admin=True,
-                config={},
-            )
+        try:
+            frontend.async_remove_panel(hass, PANEL_URL_PATH, warn_if_unknown=False)
+        except Exception:  # noqa: BLE001 - removal is only to make reloads clean.
+            pass
+
+        await panel_custom.async_register_panel(
+            hass,
+            webcomponent_name="homekit-preview-panel",
+            frontend_url_path=PANEL_URL_PATH,
+            module_url=PANEL_JS_URL,
+            sidebar_title="HomeKit Preview",
+            sidebar_icon="mdi:home-edit-outline",
+            require_admin=True,
+            config={},
         )
     except Exception:  # noqa: BLE001 - sidebar failure should not break the helper.
         _LOGGER.exception("Failed to register HomeKit Preview sidebar panel")
@@ -113,7 +117,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.services.async_register(DOMAIN, SCAN_SERVICE, handle_scan)
     await _async_register_static_path(hass)
     async_register_api(hass)
-    _register_panel(hass)
+    await _async_register_panel(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
@@ -125,4 +129,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
         if not hass.data.get(DOMAIN):
             hass.services.async_remove(DOMAIN, SCAN_SERVICE)
+            try:
+                from homeassistant.components import frontend
+
+                frontend.async_remove_panel(hass, PANEL_URL_PATH, warn_if_unknown=False)
+            except Exception:  # noqa: BLE001
+                pass
     return unload_ok
