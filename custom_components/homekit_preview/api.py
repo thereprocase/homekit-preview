@@ -1,12 +1,25 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
-from .const import DATA_COORDINATOR, DATA_ENTRIES, DOMAIN, HOMEKIT_DOMAIN
+from .const import (
+    CONF_PROXIES,
+    DATA_COORDINATOR,
+    DATA_ENTRIES,
+    DATA_PROXY_SYNC,
+    DOMAIN,
+    HOMEKIT_DOMAIN,
+)
 from .preview import normalize_filter
+from .proxy import (
+    PROXY_TARGET_PROFILES,
+    build_proxy_config,
+    normalize_proxy_configs,
+)
 
 STATUS_NAMES = {
     0: "ready",
@@ -34,8 +47,20 @@ def _runtime_for_any_entry(hass: HomeAssistant):
     """Return a runtime that can refresh preview data."""
     return _first_runtime(hass)
 
+def _preview_entry(hass: HomeAssistant):
+    """Return the configured HomeKit Preview entry."""
+    entries = list(hass.config_entries.async_entries(DOMAIN))
+    if not entries:
+        raise ValueError("HomeKit Preview is not configured")
+    return entries[0]
 
+
+def _proxy_configs(hass: HomeAssistant) -> list[dict[str, Any]]:
+    """Return persisted HomeKit Preview proxy configs."""
+    entry = _preview_entry(hass)
+    return normalize_proxy_configs(entry.options.get(CONF_PROXIES, []))
 def _homekit_entry(hass: HomeAssistant, entry_id: str):
+
     entry = hass.config_entries.async_get_entry(entry_id)
     if entry is None or entry.domain != HOMEKIT_DOMAIN:
         raise ValueError("Selected config entry is not a HomeKit entry")
@@ -106,6 +131,26 @@ def _pairing_info(entry) -> dict[str, Any]:
     }
 
 
+def _preview_payload(hass: HomeAssistant, coordinator) -> dict[str, Any]:
+    """Return preview data with live pairing and proxy metadata."""
+    data = dict(coordinator.data or {})
+    pairing = {
+        entry.entry_id: _pairing_info(entry)
+        for entry in hass.config_entries.async_entries(HOMEKIT_DOMAIN)
+    }
+    data["pairing"] = pairing
+    for item in data.get("entries", []):
+        if isinstance(item, dict):
+            item["pairing"] = pairing.get(item.get("entry_id"))
+    data["proxy_profiles"] = [profile.copy() for profile in PROXY_TARGET_PROFILES]
+    try:
+        proxies = _proxy_configs(hass)
+    except ValueError:
+        proxies = []
+    data["proxies"] = proxies
+    data["proxy_count"] = len(proxies)
+    return data
+
 async def _apply_filter(hass: HomeAssistant, entry_id: str, raw_filter: dict) -> dict:
     """Apply a HomeKit Bridge filter and reload that HomeKit entry."""
     entry = _homekit_entry(hass, entry_id)
@@ -116,6 +161,27 @@ async def _apply_filter(hass: HomeAssistant, entry_id: str, raw_filter: dict) ->
     await hass.config_entries.async_reload(entry.entry_id)
     return normalized
 
+
+async def _include_proxy_in_homekit_filter(
+    hass: HomeAssistant,
+    entry_id: str,
+    source_entity_id: str,
+    proxy_entity_id: str,
+    replace_source: bool,
+) -> dict:
+    """Include a proxy entity in a HomeKit Bridge filter and reload that entry."""
+    entry = _homekit_entry(hass, entry_id)
+    normalized = normalize_filter(dict(entry.options or {}).get("filter") or {})
+    include_entities = set(normalized["include_entities"])
+    include_entities.add(proxy_entity_id)
+    if replace_source:
+        include_entities.discard(source_entity_id)
+    normalized["include_entities"] = sorted(include_entities)
+    options = dict(entry.options or {})
+    options["filter"] = normalized
+    hass.config_entries.async_update_entry(entry, options=options)
+    await hass.config_entries.async_reload(entry.entry_id)
+    return normalized
 
 class HomeKitPreviewDataView(HomeAssistantView):
     """Return the latest HomeKit Preview data."""
@@ -131,12 +197,7 @@ class HomeKitPreviewDataView(HomeAssistantView):
             return self.json({"error": "HomeKit Preview is not configured"}, status_code=404)
 
         coordinator = runtime[DATA_COORDINATOR]
-        data = dict(coordinator.data or {})
-        pairing = {entry.entry_id: _pairing_info(entry) for entry in hass.config_entries.async_entries(HOMEKIT_DOMAIN)}
-        data["pairing"] = pairing
-        for item in data.get("entries", []):
-            if isinstance(item, dict):
-                item["pairing"] = pairing.get(item.get("entry_id"))
+        data = _preview_payload(hass, coordinator)
         return self.json(data)
 
 
@@ -155,12 +216,7 @@ class HomeKitPreviewScanView(HomeAssistantView):
 
         await runtime["async_scan_and_notify"]()
         coordinator = runtime[DATA_COORDINATOR]
-        data = dict(coordinator.data or {})
-        pairing = {entry.entry_id: _pairing_info(entry) for entry in hass.config_entries.async_entries(HOMEKIT_DOMAIN)}
-        data["pairing"] = pairing
-        for item in data.get("entries", []):
-            if isinstance(item, dict):
-                item["pairing"] = pairing.get(item.get("entry_id"))
+        data = _preview_payload(hass, coordinator)
         return self.json(data)
 
     async def get(self, request):
@@ -252,7 +308,7 @@ class _ApplyFilterMixin:
 
         await runtime["async_scan_and_notify"]()
         coordinator = runtime[DATA_COORDINATOR]
-        data = dict(coordinator.data or {})
+        data = _preview_payload(hass, coordinator)
         data = {**data, "applied_filter": applied_filter, "applied_entry_id": entry_id}
         return self.json(data)
 
@@ -279,6 +335,140 @@ class HomeKitPreviewUpdateFilterView(_ApplyFilterMixin, HomeAssistantView):
         return await self._handle_apply(request)
 
 
+
+class HomeKitPreviewProxyView(HomeAssistantView):
+    """Create and list HomeKit-compatible proxy entities."""
+
+    url = "/api/homekit_preview/proxies"
+    name = "api:homekit_preview:proxies"
+    requires_auth = True
+
+    async def get(self, request):
+        hass = request.app["hass"]
+        try:
+            proxies = _proxy_configs(hass)
+        except ValueError as err:
+            return self.json({"error": str(err)}, status_code=404)
+        return self.json(
+            {
+                "proxy_profiles": [profile.copy() for profile in PROXY_TARGET_PROFILES],
+                "proxies": proxies,
+                "proxy_count": len(proxies),
+            }
+        )
+
+    async def post(self, request):
+        hass = request.app["hass"]
+        runtime = _runtime_for_any_entry(hass)
+        if runtime is None:
+            return self.json({"error": "HomeKit Preview is not configured"}, status_code=404)
+
+        if not _admin_allowed(request):
+            return self.json({"error": "Admin privileges are required"}, status_code=403)
+
+        body = await request.json()
+        source_entity_id = body.get("source_entity_id")
+        target_profile_id = body.get("target_profile_id")
+        name = str(body.get("name") or "").strip()
+        bridge_entry_id = body.get("bridge_entry_id")
+        include_in_bridge = bool(body.get("include_in_bridge", True))
+        replace_source = bool(body.get("replace_source", True))
+
+        if not isinstance(source_entity_id, str) or not source_entity_id:
+            return self.json({"error": "source_entity_id is required"}, status_code=400)
+        if not isinstance(target_profile_id, str) or not target_profile_id:
+            return self.json({"error": "target_profile_id is required"}, status_code=400)
+        if not name:
+            return self.json({"error": "name is required"}, status_code=400)
+        if include_in_bridge and (not isinstance(bridge_entry_id, str) or not bridge_entry_id):
+            return self.json({"error": "bridge_entry_id is required when include_in_bridge is true"}, status_code=400)
+
+        try:
+            preview_entry = _preview_entry(hass)
+            existing = normalize_proxy_configs(preview_entry.options.get(CONF_PROXIES, []))
+            created_proxy = build_proxy_config(
+                hass,
+                existing,
+                source_entity_id,
+                target_profile_id,
+                name,
+            )
+        except Exception as err:  # noqa: BLE001 - return validation errors to the panel.
+            return self.json({"error": f"{type(err).__name__}: {err}"}, status_code=400)
+
+        options = dict(preview_entry.options or {})
+        proxies = [*existing, created_proxy]
+        options[CONF_PROXIES] = proxies
+        hass.config_entries.async_update_entry(preview_entry, options=options)
+
+        sync = runtime.get(DATA_PROXY_SYNC)
+        if callable(sync):
+            await sync()
+            await asyncio.sleep(0.2)
+
+        applied_filter = None
+        if include_in_bridge:
+            try:
+                applied_filter = await _include_proxy_in_homekit_filter(
+                    hass,
+                    bridge_entry_id,
+                    source_entity_id,
+                    created_proxy["entity_id"],
+                    replace_source,
+                )
+            except Exception as err:  # noqa: BLE001 - proxy was created; report filter failure.
+                return self.json(
+                    {
+                        "error": f"{type(err).__name__}: {err}",
+                        "created_proxy": created_proxy,
+                    },
+                    status_code=400,
+                )
+
+        await runtime["async_scan_and_notify"]()
+        coordinator = runtime[DATA_COORDINATOR]
+        data = _preview_payload(hass, coordinator)
+        data["created_proxy"] = created_proxy
+        data["applied_filter"] = applied_filter
+        data["applied_entry_id"] = bridge_entry_id
+        return self.json(data)
+class HomeKitPreviewReloadSelfView(HomeAssistantView):
+
+
+    """Reload HomeKit Preview without reloading HomeKit Bridge entries."""
+
+    url = "/api/homekit_preview/reload_self"
+    name = "api:homekit_preview:reload_self"
+    requires_auth = True
+
+    async def post(self, request):
+        hass = request.app["hass"]
+        if not _admin_allowed(request):
+            return self.json({"error": "Admin privileges are required"}, status_code=403)
+
+        entries = list(hass.config_entries.async_entries(DOMAIN))
+        if not entries:
+            return self.json({"error": "HomeKit Preview is not configured"}, status_code=404)
+
+        results: dict[str, Any] = {}
+        for entry in entries:
+            try:
+                results[entry.entry_id] = await hass.config_entries.async_reload(entry.entry_id)
+            except Exception as err:  # noqa: BLE001 - return the actionable reload error.
+                results[entry.entry_id] = f"{type(err).__name__}: {err}"
+
+        ok = all(value is True for value in results.values())
+        return self.json(
+            {
+                "ok": ok,
+                "reloaded_entry_ids": [entry.entry_id for entry in entries],
+                "results": results,
+                "message": "Reloaded HomeKit Preview. HomeKit Bridge entries were not reloaded.",
+            },
+            status_code=200 if ok else 500,
+        )
+
+
 def async_register_api(hass: HomeAssistant) -> None:
     """Register HomeKit Preview API views."""
     hass.http.register_view(HomeKitPreviewDataView)
@@ -287,3 +477,5 @@ def async_register_api(hass: HomeAssistant) -> None:
     hass.http.register_view(HomeKitPreviewShowPairingView)
     hass.http.register_view(HomeKitPreviewApplyView)
     hass.http.register_view(HomeKitPreviewUpdateFilterView)
+    hass.http.register_view(HomeKitPreviewProxyView)
+    hass.http.register_view(HomeKitPreviewReloadSelfView)

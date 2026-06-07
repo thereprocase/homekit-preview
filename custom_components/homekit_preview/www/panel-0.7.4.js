@@ -1,6 +1,6 @@
 const ICON_URL = "/homekit_preview_static/icon.svg";
-const PANEL_TAG = "homekit-preview-panel-v071";
-const BUILD_LABEL = "0.7.3 · 4190bcd51f9f+local";
+const PANEL_TAG = "homekit-preview-panel-v074";
+const BUILD_LABEL = "0.7.4 · 4190bcd51f9f+local";
 const EMPTY_FILTER = {
   include_domains: [], include_entities: [], include_entity_globs: [],
   exclude_domains: [], exclude_entities: [], exclude_entity_globs: [],

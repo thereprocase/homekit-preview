@@ -21,6 +21,7 @@ from .const import (
     DEFAULT_CREATE_NOTIFICATION,
     DOMAIN,
     PANEL_ICON,
+    PANEL_ELEMENT_NAME,
     PANEL_JS_URL,
     PANEL_TITLE,
     PANEL_URL_PATH,
@@ -118,7 +119,7 @@ async def _async_register_panel(hass: HomeAssistant) -> None:
         await panel_custom.async_register_panel(
             hass,
             frontend_url_path=PANEL_URL_PATH,
-            webcomponent_name="homekit-preview-panel",
+            webcomponent_name=PANEL_ELEMENT_NAME,
             module_url=PANEL_JS_URL,
             sidebar_title=PANEL_TITLE,
             sidebar_icon=PANEL_ICON,

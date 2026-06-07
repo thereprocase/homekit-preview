@@ -4,12 +4,31 @@ import fnmatch
 from dataclasses import dataclass
 from typing import Any
 
+from homeassistant.components.cover import CoverDeviceClass, CoverEntityFeature
+from homeassistant.components.lawn_mower import LawnMowerEntityFeature
+from homeassistant.components.media_player import (
+    MediaPlayerDeviceClass,
+    MediaPlayerEntityFeature,
+)
+from homeassistant.components.remote import RemoteEntityFeature
+from homeassistant.components.sensor import SensorDeviceClass
+from homeassistant.components.switch import SwitchDeviceClass
+from homeassistant.const import (
+    ATTR_DEVICE_CLASS,
+    ATTR_SUPPORTED_FEATURES,
+    ATTR_UNIT_OF_MEASUREMENT,
+    LIGHT_LUX,
+    PERCENTAGE,
+    UnitOfTemperature,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.entityfilter import EntityFilter, FILTER_SCHEMA
 from homeassistant.helpers import entity_registry as er
 
-from .const import HOMEKIT_DOMAIN
+from .const import CONF_PROXIES, DOMAIN, HOMEKIT_DOMAIN
+from .proxy import normalize_proxy_configs, proxy_profiles_for_unit
 
 SUPPORTED_HOMEKIT_DOMAINS = {
     "alarm_control_panel",
@@ -19,7 +38,6 @@ SUPPORTED_HOMEKIT_DOMAINS = {
     "camera",
     "climate",
     "cover",
-    "demo",
     "device_tracker",
     "fan",
     "humidifier",
@@ -43,11 +61,35 @@ SUPPORTED_HOMEKIT_DOMAINS = {
 }
 
 ACCESSORY_HINT_DOMAINS = {"camera", "lock", "media_player", "remote"}
+CONF_ENTITY_CONFIG = "entity_config"
+CONF_EXCLUDE_ACCESSORY_MODE = "exclude_accessory_mode"
+CONF_FEATURE_LIST = "feature_list"
+CONF_HOMEKIT_MODE = "mode"
+CONF_TYPE = "type"
+DEFAULT_EXCLUDE_ACCESSORY_MODE = False
+DEFAULT_HOMEKIT_MODE = "bridge"
+FEATURE_ON_OFF = "on_off"
+FEATURE_PLAY_PAUSE = "play_pause"
+FEATURE_PLAY_STOP = "play_stop"
+FEATURE_TOGGLE_MUTE = "toggle_mute"
 HOMEKIT_MODE_ACCESSORY = "accessory"
 HOMEKIT_MODE_BRIDGE = "bridge"
 UNAVAILABLE_STATES = {"unavailable", "unknown"}
 MAX_EXPOSED_PER_ENTRY = 500
 MAX_CANDIDATES_PER_ENTRY = 2000
+MAX_HOMEKIT_BRIDGE_CHILDREN = 149
+FAN_TYPES = {
+    "air_purifier": "AirPurifier",
+    "fan": "Fan",
+}
+SWITCH_TYPES = {
+    "faucet": "ValveSwitch",
+    "outlet": "Outlet",
+    "shower": "ValveSwitch",
+    "sprinkler": "ValveSwitch",
+    "switch": "Switch",
+    "valve": "ValveSwitch",
+}
 FILTER_KEYS = (
     "include_domains",
     "include_entities",
@@ -137,68 +179,43 @@ def _has_include_filters(fc: FilterConfig) -> bool:
     return bool(fc.include_domains or fc.include_entities or fc.include_entity_globs)
 
 
-def _included_by_homekit_ui_semantics(entity_id: str, domain: str, fc: FilterConfig) -> bool:
-    """Return whether HomeKit Bridge UI-style includes select this entity.
-
-    The HomeKit Bridge options flow is presented as domain buckets. Selecting a
-    domain means the whole domain, unless specific entities in that same domain
-    are selected; then the domain is narrowed to those selected entities. This
-    deliberately differs from Home Assistant's generic EntityFilter semantics.
-    """
-    if domain not in SUPPORTED_HOMEKIT_DOMAINS:
-        return False
-
-    if not _has_include_filters(fc):
-        return True
-
-    if domain in fc.include_domains:
-        explicit_in_domain = _explicit_entities_for_domain(fc, domain)
-        if explicit_in_domain:
-            return entity_id in explicit_in_domain or _match_any_glob(entity_id, fc.include_entity_globs)
-        return True
-
-    return entity_id in fc.include_entities or _match_any_glob(entity_id, fc.include_entity_globs)
+def _entity_filter(fc: FilterConfig) -> EntityFilter:
+    """Build the same entity filter HomeKit Bridge uses."""
+    return FILTER_SCHEMA(_filter_payload(fc))
 
 
-def _included(entity_id: str, domain: str, fc: FilterConfig) -> bool:
-    if not _included_by_homekit_ui_semantics(entity_id, domain, fc):
-        return False
-    if domain in fc.exclude_domains:
-        return False
-    if entity_id in fc.exclude_entities:
-        return False
-    if _match_any_glob(entity_id, fc.exclude_entity_globs):
-        return False
-    return True
+def _included(entity_id: str, entity_filter: EntityFilter) -> bool:
+    return bool(entity_filter(entity_id))
 
 
-def _inclusion_reason(entity_id: str, domain: str, fc: FilterConfig) -> str:
-    explicit_in_domain = _explicit_entities_for_domain(fc, domain)
-    if entity_id in fc.include_entities:
-        return "selected entity"
-    if _match_any_glob(entity_id, fc.include_entity_globs):
-        return "include glob"
-    if domain in fc.include_domains and explicit_in_domain:
-        return "selected entity in domain"
-    if domain in fc.include_domains:
-        return f"ALL {domain} domain"
-    if not _has_include_filters(fc):
-        return "no include filter"
-    return "included"
+def _filter_reason(entity_id: str, domain: str, fc: FilterConfig, included: bool) -> str:
+    has_include = _has_include_filters(fc)
+    has_exclude = bool(fc.exclude_domains or fc.exclude_entities or fc.exclude_entity_globs)
 
+    if included:
+        if entity_id in fc.include_entities:
+            return "selected entity"
+        if entity_id not in fc.exclude_entities and _match_any_glob(entity_id, fc.include_entity_globs):
+            return "include glob"
+        if domain in fc.include_domains:
+            if _match_any_glob(entity_id, fc.exclude_entity_globs):
+                return "selected entity"
+            return f"ALL {domain} domain"
+        if not has_include and has_exclude:
+            return "not excluded"
+        if not has_include:
+            return "no include filter"
+        return "included by HomeKit filter"
 
-def _exclusion_reason(entity_id: str, domain: str, fc: FilterConfig) -> str:
     if domain not in SUPPORTED_HOMEKIT_DOMAINS:
         return "unsupported domain"
-    if domain in fc.exclude_domains:
-        return "excluded domain"
     if entity_id in fc.exclude_entities:
         return "excluded entity"
     if _match_any_glob(entity_id, fc.exclude_entity_globs):
         return "excluded by glob"
-    if domain in fc.include_domains and _explicit_entities_for_domain(fc, domain):
-        return "filtered out by selected entities in this domain"
-    if _has_include_filters(fc):
+    if domain in fc.exclude_domains:
+        return "excluded domain"
+    if has_include:
         return "not selected"
     return "not exposed"
 
@@ -209,20 +226,19 @@ def _domain_wide_include_hints(fc: FilterConfig, domain_counts: dict[str, int]) 
         explicit = sorted(_explicit_entities_for_domain(fc, domain))
         count = domain_counts.get(domain, 0)
         pretty = domain.replace("_", " ")
+        suffix = ""
         if explicit:
-            message = (
-                f"{pretty.title()} is narrowed to {len(explicit)} selected {domain} "
-                "entity/entities. Other entities in this domain are filtered out."
+            suffix = (
+                f" The filter also explicitly includes {len(explicit)} {domain} "
+                "entity/entities, but HomeKit's EntityFilter does not use that "
+                "to narrow a domain include."
             )
-            mode = "narrowed"
-        else:
-            message = (
-                f"ALL {pretty} entities are included because this bridge includes the "
-                f"{domain} domain and no specific {domain} entities are selected. "
-                "To filter it, select at least one entity of this domain, or use the "
-                "Device Picker to generate an exact entity list."
-            )
-            mode = "all"
+        message = (
+            f"ALL supportable {pretty} entities are included because this bridge "
+            f"includes the {domain} domain.{suffix} Use the Device Picker to "
+            "write an exact entity list if that is not intended."
+        )
+        mode = "all"
         hints.append(
             {
                 "domain": domain,
@@ -275,6 +291,9 @@ def _entity_preview(hass: HomeAssistant, state, entity_reg, device_reg, area_reg
     if device_entry:
         device_name = device_entry.name_by_user or device_entry.name
 
+    device_class = state.attributes.get(ATTR_DEVICE_CLASS)
+    unit = state.attributes.get(ATTR_UNIT_OF_MEASUREMENT)
+    state_class = state.attributes.get("state_class")
     return {
         "entity_id": entity_id,
         "name": state.name,
@@ -282,6 +301,9 @@ def _entity_preview(hass: HomeAssistant, state, entity_reg, device_reg, area_reg
         "state": str(state.state),
         "available": state.state not in UNAVAILABLE_STATES,
         "area_id": area_id,
+        "device_class": str(_value(device_class)) if device_class is not None else None,
+        "unit_of_measurement": str(unit) if unit is not None else None,
+        "state_class": str(_value(state_class)) if state_class is not None else None,
         "area": area_name or "No room",
         "device_id": device_id,
         "device": device_name or "No device",
@@ -289,6 +311,306 @@ def _entity_preview(hass: HomeAssistant, state, entity_reg, device_reg, area_reg
         "disabled_by": str(entity_entry.disabled_by) if entity_entry and entity_entry.disabled_by else None,
         "entity_category": str(entity_entry.entity_category) if entity_entry and entity_entry.entity_category else None,
     }
+
+
+def _value(value: Any) -> Any:
+    return getattr(value, "value", value)
+
+
+def _feature_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _as_list(value: Any) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, str):
+        return [value]
+    try:
+        return [str(item) for item in value]
+    except TypeError:
+        return [str(value)]
+
+
+def _media_player_features(state) -> list[str]:
+    features = _feature_int(state.attributes.get(ATTR_SUPPORTED_FEATURES, 0))
+    supported_modes: list[str] = []
+    if features & (
+        MediaPlayerEntityFeature.TURN_ON | MediaPlayerEntityFeature.TURN_OFF
+    ):
+        supported_modes.append(FEATURE_ON_OFF)
+    if features & (MediaPlayerEntityFeature.PLAY | MediaPlayerEntityFeature.PAUSE):
+        supported_modes.append(FEATURE_PLAY_PAUSE)
+    if features & (MediaPlayerEntityFeature.PLAY | MediaPlayerEntityFeature.STOP):
+        supported_modes.append(FEATURE_PLAY_STOP)
+    if features & MediaPlayerEntityFeature.VOLUME_MUTE:
+        supported_modes.append(FEATURE_TOGGLE_MUTE)
+    return supported_modes
+
+
+def _validate_media_player_features(state, feature_list: Any) -> bool:
+    supported_modes = _media_player_features(state)
+    if not supported_modes:
+        return False
+    requested = _as_list(feature_list)
+    return not requested or all(feature in supported_modes for feature in requested)
+
+
+def _state_needs_accessory_mode(state) -> bool:
+    device_class = _value(state.attributes.get(ATTR_DEVICE_CLASS))
+    features = _feature_int(state.attributes.get(ATTR_SUPPORTED_FEATURES, 0))
+    if state.domain in ("camera", "lock"):
+        return True
+    if state.domain == "media_player" and device_class in (
+        _value(MediaPlayerDeviceClass.TV),
+        _value(MediaPlayerDeviceClass.RECEIVER),
+    ):
+        return True
+    return bool(
+        state.domain == "remote" and features & RemoteEntityFeature.ACTIVITY
+    )
+
+
+def _homekit_accessory_type(state, config: dict[str, Any]) -> tuple[str | None, str]:
+    """Return the HomeKit accessory type selected by HomeKit's branch table."""
+    domain = state.domain
+    features = _feature_int(state.attributes.get(ATTR_SUPPORTED_FEATURES, 0))
+
+    if domain == "alarm_control_panel":
+        return "SecuritySystem", "supported as SecuritySystem"
+
+    if domain in ("binary_sensor", "device_tracker", "person"):
+        return "BinarySensor", "supported as BinarySensor"
+
+    if domain == "climate":
+        return "Thermostat", "supported as Thermostat"
+
+    if domain == "cover":
+        device_class = _value(state.attributes.get(ATTR_DEVICE_CLASS))
+        if device_class in (
+            _value(CoverDeviceClass.GARAGE),
+            _value(CoverDeviceClass.GATE),
+        ) and features & (CoverEntityFeature.OPEN | CoverEntityFeature.CLOSE):
+            return "GarageDoorOpener", "supported as GarageDoorOpener"
+        if (
+            device_class == _value(CoverDeviceClass.WINDOW)
+            and features & CoverEntityFeature.SET_POSITION
+        ):
+            return "Window", "supported as Window"
+        if (
+            device_class == _value(CoverDeviceClass.DOOR)
+            and features & CoverEntityFeature.SET_POSITION
+        ):
+            return "Door", "supported as Door"
+        if features & CoverEntityFeature.SET_POSITION:
+            return "WindowCovering", "supported as WindowCovering"
+        if features & (CoverEntityFeature.OPEN | CoverEntityFeature.CLOSE):
+            return "WindowCoveringBasic", "supported as WindowCoveringBasic"
+        if features & CoverEntityFeature.SET_TILT_POSITION:
+            return "WindowCovering", "supported as WindowCovering"
+        return None, "unsupported cover features"
+
+    if domain == "fan":
+        fan_type = config.get(CONF_TYPE)
+        if fan_type:
+            accessory_type = FAN_TYPES.get(fan_type)
+            return (
+                accessory_type,
+                "supported as configured fan type"
+                if accessory_type
+                else "unsupported configured fan type",
+            )
+        return "Fan", "supported as Fan"
+
+    if domain == "humidifier":
+        return "HumidifierDehumidifier", "supported as HumidifierDehumidifier"
+
+    if domain == "light":
+        return "Light", "supported as Light"
+
+    if domain == "lock":
+        return "Lock", "supported as Lock"
+
+    if domain == "media_player":
+        device_class = _value(state.attributes.get(ATTR_DEVICE_CLASS))
+        if device_class == _value(MediaPlayerDeviceClass.RECEIVER):
+            return "ReceiverMediaPlayer", "supported as ReceiverMediaPlayer"
+        if device_class == _value(MediaPlayerDeviceClass.TV):
+            return "TelevisionMediaPlayer", "supported as TelevisionMediaPlayer"
+        if _validate_media_player_features(state, config.get(CONF_FEATURE_LIST, [])):
+            return "MediaPlayer", "supported as MediaPlayer"
+        return None, "unsupported media_player features"
+
+    if domain == "sensor":
+        device_class = _value(state.attributes.get(ATTR_DEVICE_CLASS))
+        unit = state.attributes.get(ATTR_UNIT_OF_MEASUREMENT)
+        if device_class == _value(SensorDeviceClass.TEMPERATURE) or unit in (
+            UnitOfTemperature.CELSIUS,
+            UnitOfTemperature.FAHRENHEIT,
+        ):
+            return "TemperatureSensor", "supported as TemperatureSensor"
+        if device_class == _value(SensorDeviceClass.HUMIDITY) and unit == PERCENTAGE:
+            return "HumiditySensor", "supported as HumiditySensor"
+        if device_class == _value(SensorDeviceClass.PM10):
+            return "PM10Sensor", "supported as PM10Sensor"
+        if device_class == _value(SensorDeviceClass.PM25):
+            return "PM25Sensor", "supported as PM25Sensor"
+        if device_class == _value(SensorDeviceClass.NITROGEN_DIOXIDE):
+            return "NitrogenDioxideSensor", "supported as NitrogenDioxideSensor"
+        if device_class == _value(SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS):
+            return "VolatileOrganicCompoundsSensor", "supported as VolatileOrganicCompoundsSensor"
+        if device_class == _value(SensorDeviceClass.GAS):
+            return "AirQualitySensor", "supported as AirQualitySensor"
+        if device_class == _value(SensorDeviceClass.CO):
+            return "CarbonMonoxideSensor", "supported as CarbonMonoxideSensor"
+        if device_class == _value(SensorDeviceClass.CO2):
+            return "CarbonDioxideSensor", "supported as CarbonDioxideSensor"
+        if device_class == _value(SensorDeviceClass.ILLUMINANCE) or unit == LIGHT_LUX:
+            return "LightSensor", "supported as LightSensor"
+        if _value(SensorDeviceClass.PM10) in state.entity_id:
+            return "PM10Sensor", "supported as PM10Sensor"
+        if _value(SensorDeviceClass.PM25) in state.entity_id:
+            return "PM25Sensor", "supported as PM25Sensor"
+        if _value(SensorDeviceClass.GAS) in state.entity_id:
+            return "AirQualitySensor", "supported as AirQualitySensor"
+        if "co2" in state.entity_id:
+            return "CarbonDioxideSensor", "supported as CarbonDioxideSensor"
+        return None, "unsupported sensor class/unit"
+
+    if domain == "switch":
+        switch_type = config.get(CONF_TYPE)
+        if switch_type:
+            accessory_type = SWITCH_TYPES.get(switch_type)
+            return (
+                accessory_type,
+                "supported as configured switch type"
+                if accessory_type
+                else "unsupported configured switch type",
+            )
+        if _value(state.attributes.get(ATTR_DEVICE_CLASS)) == _value(SwitchDeviceClass.OUTLET):
+            return "Outlet", "supported as Outlet"
+        return "Switch", "supported as Switch"
+
+    if domain == "valve":
+        return "Valve", "supported as Valve"
+
+    if domain == "vacuum":
+        return "Vacuum", "supported as Vacuum"
+
+    if domain == "lawn_mower":
+        if features & LawnMowerEntityFeature.DOCK and features & LawnMowerEntityFeature.START_MOWING:
+            return "LawnMower", "supported as LawnMower"
+        return None, "lawn_mower needs dock and start_mowing features"
+
+    if domain == "remote" and features & RemoteEntityFeature.ACTIVITY:
+        return "ActivityRemote", "supported as ActivityRemote"
+
+    if domain in (
+        "automation",
+        "button",
+        "input_boolean",
+        "input_button",
+        "remote",
+        "scene",
+        "script",
+    ):
+        return "Switch", "supported as Switch"
+
+    if domain in ("input_select", "select"):
+        return "SelectSwitch", "supported as SelectSwitch"
+
+    if domain == "water_heater":
+        return "WaterHeater", "supported as WaterHeater"
+
+    if domain == "camera":
+        return "Camera", "supported as Camera"
+
+    return None, "unsupported domain"
+
+
+def _entity_config(payload: dict[str, Any], entity_id: str) -> dict[str, Any]:
+    configs = payload.get(CONF_ENTITY_CONFIG) or {}
+    if not isinstance(configs, dict):
+        return {}
+    value = configs.get(entity_id) or {}
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _post_filter_result(state, entity_entry, entity_filter: EntityFilter, payload: dict[str, Any], mode: str) -> tuple[bool, str]:
+    if entity_entry and (
+        entity_entry.entity_category is not None or entity_entry.hidden_by is not None
+    ) and not entity_filter.explicitly_included(state.entity_id):
+        if entity_entry.hidden_by is not None:
+            return False, "hidden registry entity is not explicitly included"
+        return False, "entity_category entity is not explicitly included"
+
+    exclude_accessory_mode = bool(
+        payload.get(CONF_EXCLUDE_ACCESSORY_MODE, DEFAULT_EXCLUDE_ACCESSORY_MODE)
+    )
+    if (
+        mode == HOMEKIT_MODE_BRIDGE
+        and exclude_accessory_mode
+        and _state_needs_accessory_mode(state)
+    ):
+        return False, "requires accessory mode and this bridge excludes accessory-mode entities"
+
+    return True, "passes HomeKit post-filter checks"
+
+
+def _simulation_result(state, entity_entry, fc: FilterConfig, entity_filter: EntityFilter, payload: dict[str, Any], mode: str) -> dict[str, Any]:
+    domain = state.domain
+    filter_included = _included(state.entity_id, entity_filter)
+    filter_reason = _filter_reason(state.entity_id, domain, fc, filter_included)
+    config = _entity_config(payload, state.entity_id)
+    accessory_type, support_reason = _homekit_accessory_type(state, config)
+    support_ok = accessory_type is not None
+    post_ok, post_reason = _post_filter_result(state, entity_entry, entity_filter, payload, mode)
+    would_expose = filter_included and support_ok and post_ok
+
+    if would_expose:
+        reason = filter_reason
+    elif not filter_included:
+        reason = filter_reason
+    elif not support_ok:
+        reason = support_reason
+    else:
+        reason = post_reason
+
+    return {
+        "would_expose": would_expose,
+        "filter_included": filter_included,
+        "filter_reason": filter_reason,
+        "homekit_supported": support_ok,
+        "homekit_type": accessory_type,
+        "support_reason": support_reason,
+        "post_filter_allowed": post_ok,
+        "post_filter_reason": post_reason,
+        "simulation_reason": reason,
+    }
+
+
+def _runtime_exposed_entity_ids(entry) -> tuple[set[str] | None, str]:
+    runtime_data = getattr(entry, "runtime_data", None)
+    homekit = getattr(runtime_data, "homekit", None)
+    driver = getattr(homekit, "driver", None)
+    accessory = getattr(driver, "accessory", None)
+    if accessory is None:
+        return None, "HomeKit runtime accessory is not loaded"
+
+    bridge_accessories = getattr(accessory, "accessories", None)
+    if bridge_accessories is not None:
+        entity_ids = {
+            entity_id
+            for child in bridge_accessories.values()
+            if (entity_id := getattr(child, "entity_id", None))
+        }
+        return entity_ids, "live HomeKit bridge runtime"
+
+    entity_id = getattr(accessory, "entity_id", None)
+    return ({entity_id} if entity_id else set()), "live HomeKit accessory runtime"
 
 
 def _room_summary(candidates: list[dict[str, Any]], exposed_ids: set[str]) -> list[dict[str, Any]]:
@@ -315,7 +637,7 @@ def build_preview(hass: HomeAssistant) -> dict[str, Any]:
     device_reg = dr.async_get(hass)
     area_reg = ar.async_get(hass)
 
-    states = sorted(hass.states.async_all(), key=lambda item: item.entity_id)
+    states = list(hass.states.async_all())
     state_ids = {state.entity_id for state in states}
     entries = []
     total = 0
@@ -326,24 +648,76 @@ def build_preview(hass: HomeAssistant) -> dict[str, Any]:
     for entry in hk_entries:
         payload = _entry_payload(entry)
         fc = _read_filter(payload)
+        entity_filter = _entity_filter(fc)
+        mode = str(payload.get(CONF_HOMEKIT_MODE, DEFAULT_HOMEKIT_MODE))
+        runtime_exposed_ids, runtime_source = _runtime_exposed_entity_ids(entry)
+        exposure_source = "runtime" if runtime_exposed_ids is not None else "simulated"
 
         exposed: list[dict[str, Any]] = []
         candidates: list[dict[str, Any]] = []
         domain_counts: dict[str, int] = {}
+        simulated_domain_counts: dict[str, int] = {}
         candidate_domain_counts: dict[str, int] = {}
+        unsupported_count = 0
+        post_filter_skip_count = 0
+        simulated_exposed_count = 0
+        mismatch_count = 0
+        accessory_mode_entity_chosen = False
         for state in states:
             entity_id = state.entity_id
-            domain = entity_id.split(".", 1)[0]
+            domain = state.domain
             if domain not in SUPPORTED_HOMEKIT_DOMAINS:
                 continue
 
             preview = _entity_preview(hass, state, entity_reg, device_reg, area_reg)
-            included_now = _included(entity_id, domain, fc)
+            entity_entry = entity_reg.async_get(entity_id)
+            preview["proxy_profiles"] = proxy_profiles_for_unit(preview.get("unit_of_measurement"))
+            simulation = _simulation_result(state, entity_entry, fc, entity_filter, payload, mode)
+            simulated_now = bool(simulation["would_expose"])
+            if mode == HOMEKIT_MODE_ACCESSORY:
+                if simulated_now and not accessory_mode_entity_chosen:
+                    accessory_mode_entity_chosen = True
+                elif simulated_now:
+                    simulated_now = False
+                    simulation["would_expose"] = False
+                    simulation["simulation_reason"] = "accessory mode exposes only the first matching entity"
+            elif simulated_now and simulated_exposed_count >= MAX_HOMEKIT_BRIDGE_CHILDREN:
+                simulated_now = False
+                simulation["would_expose"] = False
+                simulation["simulation_reason"] = "HomeKit bridge accessory limit reached"
+
+            if simulated_now:
+                simulated_exposed_count += 1
+                simulated_domain_counts[domain] = simulated_domain_counts.get(domain, 0) + 1
+
+            if not simulation["homekit_supported"]:
+                unsupported_count += 1
+            elif not simulation["post_filter_allowed"]:
+                post_filter_skip_count += 1
+
+            if runtime_exposed_ids is None:
+                included_now = simulated_now
+            else:
+                included_now = entity_id in runtime_exposed_ids
+                if included_now != simulated_now:
+                    mismatch_count += 1
+
             preview["currently_exposed"] = included_now
+            preview["exposure_source"] = exposure_source
+            preview["runtime_source"] = runtime_source
+            preview["would_expose"] = simulated_now
+            preview["selectable"] = bool(simulation["homekit_supported"]) and (
+                mode != HOMEKIT_MODE_BRIDGE
+                or not (
+                    payload.get(CONF_EXCLUDE_ACCESSORY_MODE, DEFAULT_EXCLUDE_ACCESSORY_MODE)
+                    and _state_needs_accessory_mode(state)
+                )
+            )
+            preview.update(simulation)
             preview["inclusion_reason"] = (
-                _inclusion_reason(entity_id, domain, fc)
-                if included_now
-                else _exclusion_reason(entity_id, domain, fc)
+                "live HomeKit runtime"
+                if included_now and runtime_exposed_ids is not None
+                else str(simulation["simulation_reason"])
             )
             candidates.append(preview)
             candidate_domain_counts[domain] = candidate_domain_counts.get(domain, 0) + 1
@@ -353,11 +727,39 @@ def build_preview(hass: HomeAssistant) -> dict[str, Any]:
                 domain_counts[domain] = domain_counts.get(domain, 0) + 1
 
         exposed_ids = {entity["entity_id"] for entity in exposed}
+        candidate_by_id = {entity["entity_id"]: entity for entity in candidates}
+        explicit_include_results = [
+            {
+                "entity_id": entity_id,
+                "currently_exposed": bool(candidate.get("currently_exposed")),
+                "name": candidate.get("name"),
+                "state": candidate.get("state"),
+                "device_class": candidate.get("device_class"),
+                "unit_of_measurement": candidate.get("unit_of_measurement"),
+                "area": candidate.get("area"),
+                "device": candidate.get("device"),
+                "proxy_profiles": candidate.get("proxy_profiles", []),
+                "would_expose": bool(candidate.get("would_expose")),
+                "homekit_supported": bool(candidate.get("homekit_supported")),
+                "homekit_type": candidate.get("homekit_type"),
+                "reason": candidate.get("simulation_reason")
+                or candidate.get("inclusion_reason")
+                or "not exposed",
+            }
+            for entity_id in sorted(fc.include_entities & state_ids)
+            if (candidate := candidate_by_id.get(entity_id))
+        ]
         missing_includes = sorted(fc.include_entities - state_ids)
         title = entry.title or payload.get("name") or "HomeKit entry"
         if missing_includes:
             warnings.append(
                 f"{title} explicitly includes missing entities: {', '.join(missing_includes)}"
+            )
+        if runtime_exposed_ids is None:
+            warnings.append(f"{title}: {runtime_source}; counts are simulated from the HomeKit filter.")
+        if mismatch_count:
+            warnings.append(
+                f"{title}: live HomeKit runtime differs from simulated filter support for {mismatch_count} entity/entities."
             )
         if not exposed:
             warnings.append(f"{title} appears to expose zero current entities.")
@@ -365,14 +767,18 @@ def build_preview(hass: HomeAssistant) -> dict[str, Any]:
         available_count = sum(1 for item in exposed if item["available"])
         unavailable_count = len(exposed) - available_count
         total += len(exposed)
-        domain_wide_includes = _domain_wide_include_hints(fc, domain_counts)
+        domain_wide_includes = _domain_wide_include_hints(fc, simulated_domain_counts)
+        exposed_sorted = sorted(exposed, key=lambda item: item["entity_id"])
+        candidates_sorted = sorted(candidates, key=lambda item: item["entity_id"])
 
         entries.append(
             {
                 "entry_id": entry.entry_id,
                 "title": title,
                 "port": payload.get("port"),
-                "mode": _entry_mode(entry, payload, exposed),
+                "mode": _entry_mode(entry, payload, exposed_sorted),
+                "exposure_source": exposure_source,
+                "runtime_source": runtime_source,
                 "filter": _filter_payload(fc),
                 "include_domains": sorted(fc.include_domains),
                 "include_entities": sorted(fc.include_entities),
@@ -381,17 +787,28 @@ def build_preview(hass: HomeAssistant) -> dict[str, Any]:
                 "exclude_entities": sorted(fc.exclude_entities),
                 "exclude_entity_globs": sorted(fc.exclude_entity_globs),
                 "exposed_count": len(exposed),
+                "simulated_exposed_count": simulated_exposed_count,
                 "available_count": available_count,
                 "unavailable_count": unavailable_count,
                 "domain_counts": dict(sorted(domain_counts.items())),
+                "simulated_domain_counts": dict(sorted(simulated_domain_counts.items())),
                 "candidate_domain_counts": dict(sorted(candidate_domain_counts.items())),
                 "candidate_count": len(candidates),
-                "room_summary": _room_summary(candidates, exposed_ids),
+                "unsupported_count": unsupported_count,
+                "post_filter_skip_count": post_filter_skip_count,
+                "simulation_mismatch_count": mismatch_count,
+                "room_summary": _room_summary(candidates_sorted, exposed_ids),
                 "domain_wide_includes": domain_wide_includes,
                 "domain_wide_include_count": sum(1 for item in domain_wide_includes if item.get("mode") == "all"),
+                "explicit_include_results": explicit_include_results,
+                "explicit_include_not_exposed": [
+                    item
+                    for item in explicit_include_results
+                    if not item.get("currently_exposed")
+                ],
                 "missing_includes": missing_includes,
-                "exposed_entities": exposed[:MAX_EXPOSED_PER_ENTRY],
-                "candidate_entities": candidates[:MAX_CANDIDATES_PER_ENTRY],
+                "exposed_entities": exposed_sorted[:MAX_EXPOSED_PER_ENTRY],
+                "candidate_entities": candidates_sorted[:MAX_CANDIDATES_PER_ENTRY],
                 "truncated": len(exposed) > MAX_EXPOSED_PER_ENTRY,
                 "truncated_count": max(0, len(exposed) - MAX_EXPOSED_PER_ENTRY),
                 "candidates_truncated": len(candidates) > MAX_CANDIDATES_PER_ENTRY,
@@ -399,11 +816,18 @@ def build_preview(hass: HomeAssistant) -> dict[str, Any]:
             }
         )
 
+    proxies: list[dict[str, Any]] = []
+    for preview_entry in hass.config_entries.async_entries(DOMAIN):
+        proxies.extend(
+            normalize_proxy_configs(preview_entry.options.get(CONF_PROXIES, []))
+        )
     return {
         "entry_count": len(entries),
         "total_exposed": total,
         "entries": entries,
         "warnings": warnings,
+        "proxies": proxies,
+        "proxy_count": len(proxies),
     }
 
 

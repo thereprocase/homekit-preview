@@ -5,7 +5,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .const import DATA_ENTRIES, DOMAIN
 
 
 async def async_setup_entry(
@@ -14,7 +14,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the scan button."""
-    runtime = hass.data[DOMAIN][entry.entry_id]
+    runtime = hass.data[DOMAIN][DATA_ENTRIES][entry.entry_id]
     async_add_entities([HomeKitPreviewScanButton(runtime, entry)])
 
 

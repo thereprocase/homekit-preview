@@ -1,6 +1,7 @@
 DOMAIN = "homekit_preview"
 
 CONF_CREATE_NOTIFICATION = "create_notification"
+CONF_PROXIES = "proxies"
 DEFAULT_CREATE_NOTIFICATION = True
 
 HOMEKIT_DOMAIN = "homekit"
@@ -8,12 +9,15 @@ SCAN_SERVICE = "scan"
 
 DATA_COORDINATOR = "coordinator"
 DATA_ENTRIES = "entries"
+DATA_PROXY_SYNC = "async_sync_proxy_entities"
 DATA_API_REGISTERED = "api_registered"
 DATA_STATIC_REGISTERED = "static_registered"
 DATA_PANEL_REGISTERED = "panel_registered"
 
 PANEL_TITLE = "HomeKit Preview"
 PANEL_URL_PATH = "homekit-preview"
-PANEL_JS_URL = "/homekit_preview_static/panel-v2.js?v=0.6.0"
+PANEL_ELEMENT_NAME = "homekit-preview-panel-v074"
+PANEL_BUILD_LABEL = "0.7.4 · 4190bcd51f9f+local"
+PANEL_JS_URL = "/homekit_preview_static/panel-0.7.4.js"
 PANEL_ICON = "mdi:home-export-outline"
 STATIC_URL_PATH = "/homekit_preview_static"
