@@ -1,6 +1,6 @@
 const ICON_URL = "/homekit_preview_static/icon.svg";
-const PANEL_TAG = "homekit-preview-panel-v083";
-const BUILD_LABEL = "0.8.3 · ui-fit";
+const PANEL_TAG = "homekit-preview-panel-v084";
+const BUILD_LABEL = "0.8.4 · table-polish";
 const EMPTY_FILTER = {
   include_domains: [], include_entities: [], include_entity_globs: [],
   exclude_domains: [], exclude_entities: [], exclude_entity_globs: [],
@@ -248,6 +248,10 @@ class HomeKitPreviewPanel extends HTMLElement {
     return `<span class="statusBadge bad">${this.escape(entity?.homekit_type || "unsupported")}</span>`;
   }
 
+  colgroup(widths) {
+    return `<colgroup>${widths.map((width) => `<col style="width:${width}">`).join("")}</colgroup>`;
+  }
+
   async reloadPreview() {
     if (!this._hass) return;
     const msg = "Reload HomeKit Preview only?\n\nThis reloads the helper integration and leaves HomeKit Bridge entries alone. Python code changes still need a Home Assistant Core restart before this button can use the new code.";
@@ -406,12 +410,19 @@ class HomeKitPreviewPanel extends HTMLElement {
       .controlBar label { display: flex; flex-direction: column; gap: 3px; min-width: 130px; color: var(--secondary-text-color); font-size: 11px; font-weight: 700; }
       .controlBar input { flex: 1 1 280px; min-width: 0; width: 100%; }
       .filterReset { align-self: end; white-space: nowrap; }
-      .tableWrap { overflow-x: auto; overflow-y: hidden; max-width: 100%; overscroll-behavior-x: contain; }
-      table { width: 100%; min-width: 760px; border-collapse: collapse; table-layout: fixed; }
+      .tableWrap { overflow-x: auto; overflow-y: hidden; max-width: 100%; overscroll-behavior-x: contain; scrollbar-gutter: stable; }
+      table { width: 100%; min-width: 720px; border-collapse: collapse; table-layout: fixed; }
+      .deviceTable { min-width: 800px; }
+      .dropTable { min-width: 800px; }
+      .previewTable { min-width: 820px; }
       th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--divider-color); vertical-align: top; overflow-wrap: anywhere; word-break: normal; }
       th { position: sticky; top: 0; z-index: 1; color: var(--secondary-text-color); background: var(--hp-surface-soft); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
       tr:last-child td { border-bottom: 0; }
       .selectedRow td { background: color-mix(in srgb, var(--success-color, #0b8043) 10%, transparent); }
+      .entityCell code { display: inline-block; max-width: 100%; }
+      .actionCell { text-align: right; }
+      .actionCell .miniBtn { width: 100%; justify-content: center; }
+      .quietCell { color: var(--secondary-text-color); }
       .blockedRow td { opacity: .68; }
       .hkDropRow td { background: color-mix(in srgb, var(--error-color, #db4437) 8%, var(--hp-surface)); }
       code, pre { background: var(--hp-surface-soft); border: var(--hp-border); border-radius: 6px; padding: 2px 5px; overflow-wrap: anywhere; white-space: normal; }
@@ -448,7 +459,8 @@ class HomeKitPreviewPanel extends HTMLElement {
         .controlBar { gap: 8px; }
         .filterReset { align-self: stretch; }
         .filterReset, .bridgeActions button { width: 100%; }
-        table { min-width: 680px; }
+        table { min-width: 640px; }
+        .deviceTable, .dropTable, .previewTable { min-width: 640px; }
         th, td { padding: 7px 8px; }
         .tabs { display: flex; }
         .tab { flex: 1 1 0; }
@@ -619,26 +631,24 @@ class HomeKitPreviewPanel extends HTMLElement {
         <div class="muted">${this.escape(device.room)} · ${device.entities.length} entities</div>
         <div class="actionRow" style="margin-top:12px;"><button id="addDevice">Add supportable entities</button><button class="secondary" id="removeDevice">Remove all entities</button></div>
       </div>
-      <div class="tableWrap"><table><thead><tr><th>Draft</th><th>Entity</th><th>Name</th><th>Domain</th><th>Live</th><th>HomeKit type</th><th>State</th><th>Reason</th><th>Action</th></tr></thead><tbody>${device.entities.map((entity) => {
+      <div class="tableWrap"><table class="deviceTable">${this.colgroup(["5%", "22%", "13%", "7%", "8%", "14%", "7%", "14%", "10%"])}<thead><tr><th>Draft</th><th>Entity</th><th>Name</th><th>Domain</th><th>Live</th><th>HomeKit type</th><th>State</th><th>Reason</th><th>Action</th></tr></thead><tbody>${device.entities.map((entity) => {
         const checked = draft.has(entity.entity_id);
         const blocked = entity.selectable === false;
         const reason = entity.currently_exposed ? entity.inclusion_reason : (entity.simulation_reason || entity.inclusion_reason);
         const profiles = this.proxyProfilesFor(entity);
         const helperAction = blocked && profiles.length
           ? `<button class="secondary miniBtn" data-proxy-source="${this.escape(entity.entity_id)}">Create helper</button>`
-          : blocked
-            ? `<span class="muted">No helper</span>`
-            : `<span class="muted">Selectable</span>`;
+          : `<span class="quietCell">-</span>`;
         return `<tr class="${checked ? "selectedRow" : ""} ${blocked ? "blockedRow" : ""}">
           <td><input type="checkbox" aria-label="Include ${this.escape(entity.entity_id)}" data-toggle-entity="${this.escape(entity.entity_id)}" ${checked ? "checked" : ""} ${blocked ? "disabled" : ""}></td>
-          <td><code>${this.escape(entity.entity_id)}</code></td>
+          <td class="entityCell"><code>${this.escape(entity.entity_id)}</code></td>
           <td>${this.escape(entity.name || "")}</td>
           <td>${this.escape(entity.domain)}</td>
           <td><span class="statusBadge ${entity.currently_exposed ? "good" : ""}">${entity.currently_exposed ? "live" : "not live"}</span></td>
           <td>${this.homeKitTypeBadge(entity)}</td>
           <td><code>${this.escape(entity.state || "")}</code></td>
           <td class="${String(reason || "").startsWith("ALL") ? "reasonWarn" : ""}">${this.escape(reason || "")}</td>
-          <td>${helperAction}</td>
+          <td class="actionCell">${helperAction}</td>
         </tr>`;
       }).join("")}</tbody></table></div>
     </div>`;
@@ -662,11 +672,11 @@ class HomeKitPreviewPanel extends HTMLElement {
   renderExplicitIncludeSkips(entry) {
     const skipped = entry.explicit_include_not_exposed || [];
     if (!skipped.length) return "";
-    return `<div class="notice warn hint"><b>Explicit includes not exposed by HomeKit</b><p>These entities are in the bridge filter but HomeKit Bridge drops them after applying HomeKit support rules.</p><div class="tableWrap" style="margin-top:12px;"><table><thead><tr><th>Status</th><th>Entity</th><th>State</th><th>Class / unit</th><th>HomeKit type</th><th>Reason</th><th>Action</th></tr></thead><tbody>${skipped.map((item) => {
+    return `<div class="notice warn hint"><b>Explicit includes not exposed by HomeKit</b><p>These entities are in the bridge filter but HomeKit Bridge drops them after applying HomeKit support rules.</p><div class="tableWrap" style="margin-top:12px;"><table class="dropTable">${this.colgroup(["10%", "25%", "8%", "13%", "15%", "17%", "12%"])}<thead><tr><th>Status</th><th>Entity</th><th>State</th><th>Class / unit</th><th>HomeKit type</th><th>Reason</th><th>Action</th></tr></thead><tbody>${skipped.map((item) => {
       const profiles = this.proxyProfilesFor(item);
       const classUnit = [item.device_class, item.unit_of_measurement].filter(Boolean).join(" / ") || "n/a";
       const action = profiles.length ? `<button class="secondary miniBtn" data-proxy-source="${this.escape(item.entity_id)}">Create helper</button>` : `<span class="muted">No same-unit helper</span>`;
-      return `<tr class="hkDropRow"><td><span class="statusBadge hkDrop">HK drops</span></td><td><code>${this.escape(item.entity_id)}</code><div class="muted">${this.escape(item.name || "")}</div></td><td><code>${this.escape(item.state || "")}</code></td><td>${this.escape(classUnit)}</td><td>${this.homeKitTypeBadge(item)}</td><td>${this.escape(item.reason || "not exposed")}</td><td>${action}</td></tr>`;
+      return `<tr class="hkDropRow"><td><span class="statusBadge hkDrop">HK drops</span></td><td class="entityCell"><code>${this.escape(item.entity_id)}</code><div class="muted">${this.escape(item.name || "")}</div></td><td><code>${this.escape(item.state || "")}</code></td><td>${this.escape(classUnit)}</td><td>${this.homeKitTypeBadge(item)}</td><td>${this.escape(item.reason || "not exposed")}</td><td class="actionCell">${action}</td></tr>`;
     }).join("")}</tbody></table></div></div>`;
   }
 
@@ -695,7 +705,7 @@ class HomeKitPreviewPanel extends HTMLElement {
 
   renderPreviewTable(rows) {
     if (!rows.length) return `<div class="card empty">No live exposed entities match the current filters.</div>`;
-    return `<div class="tableWrap"><table><thead><tr><th>Entity</th><th>Name</th><th>Domain</th><th>Room</th><th>Device</th><th>State</th><th>Available</th><th>HomeKit type</th><th>Why exposed</th></tr></thead><tbody>${rows.map((e) => `<tr><td><code>${this.escape(e.entity_id)}</code></td><td>${this.escape(e.name || "")}</td><td>${this.escape(e.domain)}</td><td>${this.escape(e.area || "")}</td><td>${this.escape(e.device || "")}</td><td><code>${this.escape(e.state || "")}</code></td><td><span class="statusBadge ${e.available ? "good" : "bad"}">${e.available ? "available" : "unavailable"}</span></td><td><span class="statusBadge ${e.homekit_supported === false ? "bad" : "good"}">${this.escape(e.homekit_type || "HomeKit")}</span></td><td class="${String(e.inclusion_reason || "").startsWith("ALL") ? "reasonWarn" : ""}">${this.escape(e.inclusion_reason || "")}</td></tr>`).join("")}</tbody></table></div>`;
+    return `<div class="tableWrap"><table class="previewTable">${this.colgroup(["20%", "13%", "7%", "9%", "12%", "7%", "9%", "10%", "13%"]) }<thead><tr><th>Entity</th><th>Name</th><th>Domain</th><th>Room</th><th>Device</th><th>State</th><th>Available</th><th>HomeKit type</th><th>Why exposed</th></tr></thead><tbody>${rows.map((e) => `<tr><td class="entityCell"><code>${this.escape(e.entity_id)}</code></td><td>${this.escape(e.name || "")}</td><td>${this.escape(e.domain)}</td><td>${this.escape(e.area || "")}</td><td>${this.escape(e.device || "")}</td><td><code>${this.escape(e.state || "")}</code></td><td><span class="statusBadge ${e.available ? "good" : "bad"}">${e.available ? "available" : "unavailable"}</span></td><td><span class="statusBadge ${e.homekit_supported === false ? "bad" : "good"}">${this.escape(e.homekit_type || "HomeKit")}</span></td><td class="${String(e.inclusion_reason || "").startsWith("ALL") ? "reasonWarn" : ""}">${this.escape(e.inclusion_reason || "")}</td></tr>`).join("")}</tbody></table></div>`;
   }
 
   filterChips(entry) {
