@@ -22,7 +22,7 @@ async def async_setup_entry(
 class HomeKitPreviewSensor(CoordinatorEntity, SensorEntity):
     """Sensor showing HomeKit Preview summary."""
 
-    _attr_icon = "mdi:home-assistant"
+    _attr_icon = "mdi:home-export-outline"
     _attr_name = "HomeKit Preview"
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
