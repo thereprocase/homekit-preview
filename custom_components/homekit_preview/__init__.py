@@ -4,7 +4,6 @@ import logging
 from pathlib import Path
 
 from homeassistant.components import persistent_notification
-from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -28,17 +27,24 @@ PANEL_JS_URL = "/homekit_preview_static/panel.js"
 async def _async_register_static_path(hass: HomeAssistant) -> None:
     """Serve bundled panel assets."""
     static_dir = Path(__file__).parent / "www"
+
+    # StaticPathConfig moved around across HA releases. Import it lazily so a
+    # missing class cannot prevent the config flow from loading.
     try:
+        from homeassistant.components.http import StaticPathConfig
+
         await hass.http.async_register_static_paths(
             [StaticPathConfig("/homekit_preview_static", str(static_dir), False)]
         )
-    except AttributeError:
-        # Older HA fallback.
-        hass.http.register_static_path(
-            "/homekit_preview_static",
-            str(static_dir),
-            cache_headers=False,
-        )
+        return
+    except (ImportError, AttributeError, TypeError):
+        pass
+
+    hass.http.register_static_path(
+        "/homekit_preview_static",
+        str(static_dir),
+        cache_headers=False,
+    )
 
 
 def _register_panel(hass: HomeAssistant) -> None:
