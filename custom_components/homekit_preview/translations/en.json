@@ -1,0 +1,32 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "HomeKit Preview",
+        "description": "Create a helper that previews what Home Assistant's HomeKit Bridge entries appear configured to expose.",
+        "data": {
+          "create_notification": "Create a persistent notification when scanning"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "HomeKit Preview is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "HomeKit Preview options",
+        "data": {
+          "create_notification": "Create a persistent notification when scanning"
+        }
+      }
+    }
+  },
+  "services": {
+    "scan": {
+      "name": "Scan HomeKit Bridge exposure",
+      "description": "Build a fresh preview of HomeKit Bridge entries and exposed entities, then optionally create a persistent notification."
+    }
+  }
+}
