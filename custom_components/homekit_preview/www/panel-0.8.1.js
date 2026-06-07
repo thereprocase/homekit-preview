@@ -1,6 +1,6 @@
 const ICON_URL = "/homekit_preview_static/icon.svg";
-const PANEL_TAG = "homekit-preview-panel-v080";
-const BUILD_LABEL = "0.8.0 · 76e0adc+local";
+const PANEL_TAG = "homekit-preview-panel-v081";
+const BUILD_LABEL = "0.8.1 · helper-ui";
 const EMPTY_FILTER = {
   include_domains: [], include_entities: [], include_entity_globs: [],
   exclude_domains: [], exclude_entities: [], exclude_entity_globs: [],
@@ -175,7 +175,7 @@ class HomeKitPreviewPanel extends HTMLElement {
     const source = this.dropById(entry, entityId);
     const profiles = this.proxyProfilesFor(source);
     if (!source || !profiles.length) {
-      this._message = "No same-unit HomeKit proxy target is available for that entity.";
+      this._message = "No same-unit HomeKit helper target is available for that entity.";
       this.render();
       return;
     }
@@ -200,7 +200,7 @@ class HomeKitPreviewPanel extends HTMLElement {
     const replace = this.shadowRoot?.getElementById("proxyReplaceSource");
     const name = String(nameInput?.value || "").trim();
     if (!name) {
-      this._message = "Proxy name is required.";
+      this._message = "Helper name is required.";
       this.render();
       return;
     }
@@ -208,8 +208,11 @@ class HomeKitPreviewPanel extends HTMLElement {
     this._proxyDraft.target_profile_id = profileSelect?.value || this._proxyDraft.target_profile_id;
     this._proxyDraft.include_in_bridge = include?.checked !== false;
     this._proxyDraft.replace_source = replace?.checked !== false;
+    const sourceId = this._proxyDraft.source_entity_id;
+    const msg = `Create a HomeKit helper entity for ${sourceId}?\n\nThis creates a Home Assistant proxy/helper entity that mirrors the source value with HomeKit-supported metadata. Apple Home will see the helper, not the original unsupported entity.`;
+    if (!confirm(msg)) return;
     this._loading = true;
-    this._message = "Creating proxy...";
+    this._message = "Creating helper entity...";
     this.render();
     try {
       const data = await this._hass.callApi("POST", "homekit_preview/proxies", {
@@ -225,13 +228,24 @@ class HomeKitPreviewPanel extends HTMLElement {
       this.ensureDraft(this.selectedEntry());
       const proxy = data?.created_proxy;
       this._proxyDraft = null;
-      this._message = proxy?.entity_id ? `Created ${proxy.entity_id} and refreshed HomeKit Preview.` : "Created proxy.";
+      this._message = proxy?.entity_id ? `Created helper ${proxy.entity_id} and refreshed HomeKit Preview.` : "Created helper entity.";
     } catch (err) {
-      this._message = `Proxy failed: ${err?.message || err}`;
+      this._message = `Helper failed: ${err?.message || err}`;
     } finally {
       this._loading = false;
       this.render();
     }
+  }
+
+  homeKitTypeBadge(entity) {
+    const profiles = this.proxyProfilesFor(entity);
+    if (entity?.homekit_supported) {
+      return `<span class="statusBadge good">${this.escape(entity.homekit_type || "HomeKit")}</span>`;
+    }
+    if (profiles.length) {
+      return `<span class="statusBadge warn">Available by proxy</span>`;
+    }
+    return `<span class="statusBadge bad">${this.escape(entity?.homekit_type || "unsupported")}</span>`;
   }
 
   async reloadPreview() {
@@ -572,7 +586,7 @@ class HomeKitPreviewPanel extends HTMLElement {
       </button>`;
     }).join("") || `<div class="card empty">No devices match the current filters.</div>`;
     return `<div class="stack">
-      <div class="notice warn hint"><b>Exact-list editor</b><p>Choose supportable entities by device, then write a precise HomeKit Bridge include list. This avoids broad domain filters that unexpectedly expose unrelated entities.</p></div>
+      <div class="notice warn hint"><b>Exact-list editor</b><p>Choose supportable entities by device, then write a precise HomeKit Bridge include list. This avoids broad domain filters that unexpectedly expose unrelated entities.</p><p>Rows marked <b>Available by proxy</b> can be translated by creating Home Assistant proxy/helper entities, then adding those proxy entities to the HomeKit Bridge instead of the unsupported source.</p></div>
       ${this.renderDomainHints(entry)}
       ${this.renderControls(rooms)}
       <div class="layout">
@@ -597,19 +611,26 @@ class HomeKitPreviewPanel extends HTMLElement {
         <div class="muted">${this.escape(device.room)} · ${device.entities.length} entities</div>
         <div class="actionRow" style="margin-top:12px;"><button id="addDevice">Add supportable entities</button><button class="secondary" id="removeDevice">Remove all entities</button></div>
       </div>
-      <div class="tableWrap"><table><thead><tr><th>Draft</th><th>Entity</th><th>Name</th><th>Domain</th><th>Live</th><th>HomeKit type</th><th>State</th><th>Reason</th></tr></thead><tbody>${device.entities.map((entity) => {
+      <div class="tableWrap"><table><thead><tr><th>Draft</th><th>Entity</th><th>Name</th><th>Domain</th><th>Live</th><th>HomeKit type</th><th>State</th><th>Reason</th><th>Action</th></tr></thead><tbody>${device.entities.map((entity) => {
         const checked = draft.has(entity.entity_id);
         const blocked = entity.selectable === false;
         const reason = entity.currently_exposed ? entity.inclusion_reason : (entity.simulation_reason || entity.inclusion_reason);
+        const profiles = this.proxyProfilesFor(entity);
+        const helperAction = blocked && profiles.length
+          ? `<button class="secondary miniBtn" data-proxy-source="${this.escape(entity.entity_id)}">Create helper</button>`
+          : blocked
+            ? `<span class="muted">No helper</span>`
+            : `<span class="muted">Selectable</span>`;
         return `<tr class="${checked ? "selectedRow" : ""} ${blocked ? "blockedRow" : ""}">
           <td><input type="checkbox" aria-label="Include ${this.escape(entity.entity_id)}" data-toggle-entity="${this.escape(entity.entity_id)}" ${checked ? "checked" : ""} ${blocked ? "disabled" : ""}></td>
           <td><code>${this.escape(entity.entity_id)}</code></td>
           <td>${this.escape(entity.name || "")}</td>
           <td>${this.escape(entity.domain)}</td>
           <td><span class="statusBadge ${entity.currently_exposed ? "good" : ""}">${entity.currently_exposed ? "live" : "not live"}</span></td>
-          <td><span class="statusBadge ${entity.homekit_supported ? "good" : "bad"}">${this.escape(entity.homekit_type || "unsupported")}</span></td>
+          <td>${this.homeKitTypeBadge(entity)}</td>
           <td><code>${this.escape(entity.state || "")}</code></td>
           <td class="${String(reason || "").startsWith("ALL") ? "reasonWarn" : ""}">${this.escape(reason || "")}</td>
+          <td>${helperAction}</td>
         </tr>`;
       }).join("")}</tbody></table></div>
     </div>`;
@@ -636,8 +657,8 @@ class HomeKitPreviewPanel extends HTMLElement {
     return `<div class="notice warn hint"><b>Explicit includes not exposed by HomeKit</b><p>These entities are in the bridge filter but HomeKit Bridge drops them after applying HomeKit support rules.</p><div class="tableWrap" style="margin-top:12px;"><table><thead><tr><th>Status</th><th>Entity</th><th>State</th><th>Class / unit</th><th>HomeKit type</th><th>Reason</th><th>Action</th></tr></thead><tbody>${skipped.map((item) => {
       const profiles = this.proxyProfilesFor(item);
       const classUnit = [item.device_class, item.unit_of_measurement].filter(Boolean).join(" / ") || "n/a";
-      const action = profiles.length ? `<button class="secondary miniBtn" data-proxy-source="${this.escape(item.entity_id)}">Create proxy</button>` : `<span class="muted">No same-unit proxy</span>`;
-      return `<tr class="hkDropRow"><td><span class="statusBadge hkDrop">HK drops</span></td><td><code>${this.escape(item.entity_id)}</code><div class="muted">${this.escape(item.name || "")}</div></td><td><code>${this.escape(item.state || "")}</code></td><td>${this.escape(classUnit)}</td><td><span class="statusBadge ${item.homekit_supported ? "good" : "bad"}">${this.escape(item.homekit_type || "unsupported")}</span></td><td>${this.escape(item.reason || "not exposed")}</td><td>${action}</td></tr>`;
+      const action = profiles.length ? `<button class="secondary miniBtn" data-proxy-source="${this.escape(item.entity_id)}">Create helper</button>` : `<span class="muted">No same-unit helper</span>`;
+      return `<tr class="hkDropRow"><td><span class="statusBadge hkDrop">HK drops</span></td><td><code>${this.escape(item.entity_id)}</code><div class="muted">${this.escape(item.name || "")}</div></td><td><code>${this.escape(item.state || "")}</code></td><td>${this.escape(classUnit)}</td><td>${this.homeKitTypeBadge(item)}</td><td>${this.escape(item.reason || "not exposed")}</td><td>${action}</td></tr>`;
     }).join("")}</tbody></table></div></div>`;
   }
 
@@ -647,20 +668,20 @@ class HomeKitPreviewPanel extends HTMLElement {
     if (!draft || draft.entry_id !== entry.entry_id) return "";
     const source = this.dropById(entry, draft.source_entity_id);
     const profiles = this.proxyProfilesFor(source);
-    if (!source || !profiles.length) return `<div class="notice warn">No same-unit HomeKit proxy target is available.</div>`;
+    if (!source || !profiles.length) return `<div class="notice warn">No same-unit HomeKit helper target is available.</div>`;
     const profile = profiles.find((item) => item.id === draft.target_profile_id) || profiles[0];
     const name = draft.name || source.name || source.entity_id;
     const unit = source.unit_of_measurement || profile.unit || "";
     const value = `${source.state ?? ""}${unit ? ` ${unit}` : ""}`;
     const entityPreview = `sensor.homekit_proxy_${this.slugPreview(name)}`;
     return `<div class="panel">
-      <div class="sectionTitle">Create HomeKit proxy</div>
-      <div class="muted">Mirror <code>${this.escape(source.entity_id)}</code> into a HomeKit-supported same-unit sensor.</div>
+      <div class="sectionTitle">Create HomeKit helper entity</div>
+      <div class="muted">Mirror <code>${this.escape(source.entity_id)}</code> into a HomeKit-supported same-unit sensor. The source keeps its real HA identity; Apple Home sees the helper.</div>
       <div class="formGrid"><label>Customer-facing name<input id="proxyName" value="${this.escape(name)}" autocomplete="off"></label><label>HomeKit-compatible type<select id="proxyProfile">${profiles.map((item) => `<option value="${this.escape(item.id)}" ${item.id === profile.id ? "selected" : ""}>${this.escape(item.label)} (${this.escape(item.homekit_type)})</option>`).join("")}</select></label></div>
-      <label class="checkboxRow"><input type="checkbox" id="proxyIncludeBridge" ${draft.include_in_bridge ? "checked" : ""}> Add proxy to this bridge filter</label>
+      <label class="checkboxRow"><input type="checkbox" id="proxyIncludeBridge" ${draft.include_in_bridge ? "checked" : ""}> Add helper to this bridge filter</label>
       <label class="checkboxRow"><input type="checkbox" id="proxyReplaceSource" ${draft.replace_source ? "checked" : ""}> Remove the original HK-dropped entity from this bridge filter</label>
-      <div class="proxySummary"><div class="homeTile"><div><b>${this.escape(name)}</b><div class="homeTileType">${this.escape(profile.label)}</div></div><div class="homeTileValue">${this.escape(value)}</div><div class="homeTileType">${this.escape(profile.customer_facing_type || profile.homekit_type)}</div></div><div class="homeTileMeta"><div><b>Apple Home preview</b></div><div>${this.escape(profile.semantic_warning || "This proxy changes HomeKit semantics while preserving the unit and value.")}</div><div class="inlineMeta"><span class="chip">Source ${this.escape(source.device_class || "sensor")} ${this.escape(source.unit_of_measurement || "")}</span><span class="chip">Proxy ${this.escape(profile.device_class)} ${this.escape(profile.unit || "")}</span><span class="chip">${this.escape(entityPreview)}</span></div></div></div>
-      <div class="actionRow" style="margin-top:14px;"><button id="proxyCreate" ${this._loading ? "disabled" : ""}>Create proxy</button><button class="secondary" id="proxyCancel">Cancel</button></div>
+      <div class="proxySummary"><div class="homeTile"><div><b>${this.escape(name)}</b><div class="homeTileType">${this.escape(profile.label)}</div></div><div class="homeTileValue">${this.escape(value)}</div><div class="homeTileType">${this.escape(profile.customer_facing_type || profile.homekit_type)}</div></div><div class="homeTileMeta"><div><b>Apple Home preview</b></div><div>${this.escape(profile.semantic_warning || "This helper changes HomeKit semantics while preserving the unit and value.")}</div><div class="inlineMeta"><span class="chip">Source ${this.escape(source.device_class || "sensor")} ${this.escape(source.unit_of_measurement || "")}</span><span class="chip">Helper ${this.escape(profile.device_class)} ${this.escape(profile.unit || "")}</span><span class="chip">${this.escape(entityPreview)}</span></div></div></div>
+      <div class="actionRow" style="margin-top:14px;"><button id="proxyCreate" ${this._loading ? "disabled" : ""}>Create helper entity</button><button class="secondary" id="proxyCancel">Cancel</button></div>
     </div>`;
   }
 
