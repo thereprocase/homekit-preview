@@ -5,26 +5,35 @@ from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import area_registry as ar
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
 from .const import HOMEKIT_DOMAIN
 
-# This intentionally covers the domains people commonly expose to HomeKit.
-# The actual HomeKit integration may support more or fewer entities depending
-# on HA version and per-platform support, so this remains a best-effort preview.
-COMMON_HOMEKIT_DOMAINS = {
+# Mirrors the current Home Assistant HomeKit config-flow supported-domain list
+# closely enough for a preview tool. The real HomeKit integration still gets
+# final say at runtime.
+SUPPORTED_HOMEKIT_DOMAINS = {
     "alarm_control_panel",
+    "automation",
     "binary_sensor",
     "button",
     "camera",
     "climate",
     "cover",
+    "demo",
+    "device_tracker",
     "fan",
     "humidifier",
     "input_boolean",
+    "input_button",
+    "input_select",
     "light",
     "lock",
+    "lawn_mower",
     "media_player",
+    "person",
     "remote",
     "scene",
     "script",
@@ -37,6 +46,10 @@ COMMON_HOMEKIT_DOMAINS = {
 }
 
 ACCESSORY_HINT_DOMAINS = {"camera", "lock", "media_player", "remote"}
+HOMEKIT_MODE_ACCESSORY = "accessory"
+HOMEKIT_MODE_BRIDGE = "bridge"
+UNAVAILABLE_STATES = {"unavailable", "unknown"}
+MAX_EXPOSED_PER_ENTRY = 500
 
 
 @dataclass(slots=True)
@@ -55,27 +68,37 @@ def _as_set(value: Any) -> set[str]:
     if isinstance(value, str):
         return {value}
     if isinstance(value, dict):
-        return {str(k) for k in value}
+        return {str(key) for key in value}
     try:
-        return {str(x) for x in value}
+        return {str(item) for item in value}
     except TypeError:
         return set()
 
 
+def _entry_payload(entry) -> dict[str, Any]:
+    """Merge HomeKit entry data/options in the same spirit as HA's options flow."""
+    data = dict(entry.data or {})
+    options = dict(entry.options or {})
+    return {**data, **options}
+
+
 def _read_filter(raw: dict[str, Any]) -> FilterConfig:
-    """Read HomeKit include/exclude filters from several possible shapes."""
+    """Read HomeKit include/exclude filters from UI and YAML-ish shapes."""
     filt = raw.get("filter") or {}
     source = {**filt, **raw}
 
     include_entities = _as_set(source.get("include_entities"))
 
-    # Accessory-mode HomeKit config entries often represent one exported object
-    # with entity_id rather than the normal bridge include/exclude filters.
+    # Accessory-mode entries normally store filter.include_entities, but keep
+    # these fallbacks because older or imported entries can be shaped oddly.
     include_entities |= _as_set(source.get("entity_id"))
     include_entities |= _as_set(source.get("entities"))
 
+    include_domains = _as_set(source.get("include_domains"))
+    include_domains |= _as_set(source.get("domains"))
+
     return FilterConfig(
-        include_domains=_as_set(source.get("include_domains")),
+        include_domains=include_domains,
         include_entities=include_entities,
         include_entity_globs=_as_set(source.get("include_entity_globs")),
         exclude_domains=_as_set(source.get("exclude_domains")),
@@ -89,17 +112,19 @@ def _match_any_glob(entity_id: str, globs: set[str]) -> bool:
 
 
 def _included(entity_id: str, domain: str, fc: FilterConfig) -> bool:
+    if domain not in SUPPORTED_HOMEKIT_DOMAINS:
+        return False
+
     explicit_includes_exist = bool(
         fc.include_domains or fc.include_entities or fc.include_entity_globs
     )
 
-    if explicit_includes_exist:
-        if (
-            entity_id not in fc.include_entities
-            and domain not in fc.include_domains
-            and not _match_any_glob(entity_id, fc.include_entity_globs)
-        ):
-            return False
+    if explicit_includes_exist and (
+        entity_id not in fc.include_entities
+        and domain not in fc.include_domains
+        and not _match_any_glob(entity_id, fc.include_entity_globs)
+    ):
+        return False
 
     if domain in fc.exclude_domains:
         return False
@@ -108,80 +133,104 @@ def _included(entity_id: str, domain: str, fc: FilterConfig) -> bool:
     if _match_any_glob(entity_id, fc.exclude_entity_globs):
         return False
 
-    return domain in COMMON_HOMEKIT_DOMAINS
+    return True
 
 
-def _entity_name(hass: HomeAssistant, registry_entry) -> str:
-    state = hass.states.get(registry_entry.entity_id)
-    if state:
-        return state.name
-    return registry_entry.name or registry_entry.original_name or registry_entry.entity_id
+def _area_name(area_reg, area_id: str | None) -> str | None:
+    if not area_id:
+        return None
+    area = area_reg.async_get_area(area_id)
+    return area.name if area else area_id
 
 
-def _entity_available(hass: HomeAssistant, entity_id: str) -> bool:
-    state = hass.states.get(entity_id)
-    return bool(state and state.state not in {"unavailable", "unknown"})
+def _entity_area_name(entity_entry, device_entry, area_reg) -> str | None:
+    if entity_entry and getattr(entity_entry, "area_id", None):
+        return _area_name(area_reg, entity_entry.area_id)
+    if device_entry and getattr(device_entry, "area_id", None):
+        return _area_name(area_reg, device_entry.area_id)
+    return None
 
 
-def _entry_mode(entry, exposed: list[dict[str, Any]]) -> str:
-    options = dict(entry.options or {})
-    data = dict(entry.data or {})
-    mode = options.get("mode") or data.get("mode") or options.get("type") or data.get("type")
+def _entry_mode(entry, payload: dict[str, Any], exposed: list[dict[str, Any]]) -> str:
+    mode = payload.get("mode") or payload.get("type")
     if mode:
         return str(mode)
-    if data.get("entity_id") or options.get("entity_id"):
+    if payload.get("entity_id"):
         return "probably accessory"
     if len(exposed) == 1 and exposed[0].get("domain") in ACCESSORY_HINT_DOMAINS:
         return "probably accessory"
     return "probably bridge"
 
 
+def _entity_preview(hass: HomeAssistant, state, entity_reg, device_reg, area_reg) -> dict[str, Any]:
+    entity_id = state.entity_id
+    domain = entity_id.split(".", 1)[0]
+    entity_entry = entity_reg.async_get(entity_id)
+    device_entry = None
+    if entity_entry and entity_entry.device_id:
+        device_entry = device_reg.async_get(entity_entry.device_id)
+
+    return {
+        "entity_id": entity_id,
+        "name": state.name,
+        "domain": domain,
+        "state": str(state.state),
+        "available": state.state not in UNAVAILABLE_STATES,
+        "area": _entity_area_name(entity_entry, device_entry, area_reg),
+        "device": device_entry.name_by_user or device_entry.name if device_entry else None,
+        "hidden_by": str(entity_entry.hidden_by) if entity_entry and entity_entry.hidden_by else None,
+        "disabled_by": str(entity_entry.disabled_by) if entity_entry and entity_entry.disabled_by else None,
+        "entity_category": str(entity_entry.entity_category) if entity_entry and entity_entry.entity_category else None,
+    }
+
+
 def build_preview(hass: HomeAssistant) -> dict[str, Any]:
     """Build a best-effort preview of HomeKit exposure."""
     entity_reg = er.async_get(hass)
-    all_entities = sorted(entity_reg.entities.values(), key=lambda item: item.entity_id)
+    device_reg = dr.async_get(hass)
+    area_reg = ar.async_get(hass)
+
+    states = sorted(hass.states.async_all(), key=lambda item: item.entity_id)
+    state_ids = {state.entity_id for state in states}
     entries = []
     total = 0
     warnings: list[str] = []
 
-    hk_entries = [
-        entry
-        for entry in hass.config_entries.async_entries()
-        if entry.domain == HOMEKIT_DOMAIN
-    ]
+    hk_entries = hass.config_entries.async_entries(HOMEKIT_DOMAIN)
 
     for entry in hk_entries:
-        options = dict(entry.options or {})
-        data = dict(entry.data or {})
-        merged = {**data, **options}
-        fc = _read_filter(merged)
+        payload = _entry_payload(entry)
+        fc = _read_filter(payload)
 
         exposed = []
-        for reg_entry in all_entities:
-            entity_id = reg_entry.entity_id
+        domain_counts: dict[str, int] = {}
+        for state in states:
+            entity_id = state.entity_id
             domain = entity_id.split(".", 1)[0]
             if _included(entity_id, domain, fc):
-                exposed.append(
-                    {
-                        "entity_id": entity_id,
-                        "name": _entity_name(hass, reg_entry),
-                        "domain": domain,
-                        "available": _entity_available(hass, entity_id),
-                    }
-                )
+                preview = _entity_preview(hass, state, entity_reg, device_reg, area_reg)
+                exposed.append(preview)
+                domain_counts[domain] = domain_counts.get(domain, 0) + 1
 
+        missing_includes = sorted(fc.include_entities - state_ids)
+        title = entry.title or payload.get("name") or "HomeKit entry"
+        if missing_includes:
+            warnings.append(
+                f"{title} explicitly includes missing entities: {', '.join(missing_includes)}"
+            )
+        if not exposed:
+            warnings.append(f"{title} appears to expose zero current entities.")
+
+        available_count = sum(1 for item in exposed if item["available"])
+        unavailable_count = len(exposed) - available_count
         total += len(exposed)
-        title = entry.title or data.get("name") or "HomeKit entry"
-        port = data.get("port") or options.get("port")
-        if len(exposed) == 0:
-            warnings.append(f"{title} appears to expose zero entities.")
 
         entries.append(
             {
                 "entry_id": entry.entry_id,
                 "title": title,
-                "port": port,
-                "mode": _entry_mode(entry, exposed),
+                "port": payload.get("port"),
+                "mode": _entry_mode(entry, payload, exposed),
                 "include_domains": sorted(fc.include_domains),
                 "include_entities": sorted(fc.include_entities),
                 "include_entity_globs": sorted(fc.include_entity_globs),
@@ -189,8 +238,13 @@ def build_preview(hass: HomeAssistant) -> dict[str, Any]:
                 "exclude_entities": sorted(fc.exclude_entities),
                 "exclude_entity_globs": sorted(fc.exclude_entity_globs),
                 "exposed_count": len(exposed),
-                "exposed_entities": exposed[:200],
-                "truncated": len(exposed) > 200,
+                "available_count": available_count,
+                "unavailable_count": unavailable_count,
+                "domain_counts": dict(sorted(domain_counts.items())),
+                "missing_includes": missing_includes,
+                "exposed_entities": exposed[:MAX_EXPOSED_PER_ENTRY],
+                "truncated": len(exposed) > MAX_EXPOSED_PER_ENTRY,
+                "truncated_count": max(0, len(exposed) - MAX_EXPOSED_PER_ENTRY),
             }
         )
 
@@ -211,7 +265,7 @@ def markdown_preview(data: dict[str, Any] | None) -> str:
     lines.append("# HomeKit Preview")
     lines.append("")
     lines.append(
-        f"Found **{data.get('entry_count', 0)}** HomeKit entries exposing approximately **{data.get('total_exposed', 0)}** entities."
+        f"Found **{data.get('entry_count', 0)}** HomeKit entries exposing approximately **{data.get('total_exposed', 0)}** current entities."
     )
 
     warnings = data.get("warnings") or []
@@ -226,7 +280,9 @@ def markdown_preview(data: dict[str, Any] | None) -> str:
         lines.append("")
         lines.append(f"## {entry.get('title')} — {entry.get('mode')} — {port}")
         lines.append("")
-        lines.append(f"Exposed count: **{entry.get('exposed_count', 0)}**")
+        lines.append(
+            f"Exposed: **{entry.get('exposed_count', 0)}** — Available: **{entry.get('available_count', 0)}** — Unavailable/unknown: **{entry.get('unavailable_count', 0)}**"
+        )
 
         for label, key in (
             ("Included domains", "include_domains"),
@@ -243,14 +299,16 @@ def markdown_preview(data: dict[str, Any] | None) -> str:
         exposed = entry.get("exposed_entities") or []
         if exposed:
             lines.append("")
-            lines.append("| Entity | Name | Domain | Available |")
-            lines.append("|---|---|---|---|")
+            lines.append("| Entity | Name | Domain | Area | State | Available |")
+            lines.append("|---|---|---|---|---|---|")
             for ent in exposed:
                 lines.append(
-                    f"| `{ent.get('entity_id')}` | {ent.get('name')} | `{ent.get('domain')}` | {ent.get('available')} |"
+                    f"| `{ent.get('entity_id')}` | {ent.get('name') or ''} | `{ent.get('domain')}` | {ent.get('area') or ''} | `{ent.get('state')}` | {ent.get('available')} |"
                 )
             if entry.get("truncated"):
                 lines.append("")
-                lines.append("Output truncated at 200 entities for this entry.")
+                lines.append(
+                    f"Output truncated at {MAX_EXPOSED_PER_ENTRY} entities for this entry; {entry.get('truncated_count', 0)} more not shown."
+                )
 
     return "\n".join(lines)
