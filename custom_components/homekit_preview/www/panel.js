@@ -65,14 +65,8 @@ class HomeKitPreviewPanel extends HTMLElement {
     return new Set(this._drafts[entry.entry_id]);
   }
 
-  saveDraft(entry, set) {
-    this._drafts[entry.entry_id] = Array.from(set).sort();
-  }
-
-  exactFilter(entry) {
-    const ids = Array.from(this.ensureDraft(entry)).sort();
-    return { ...EMPTY_FILTER, include_entities: ids };
-  }
+  saveDraft(entry, set) { this._drafts[entry.entry_id] = Array.from(set).sort(); }
+  exactFilter(entry) { return { ...EMPTY_FILTER, include_entities: Array.from(this.ensureDraft(entry)).sort() }; }
 
   draftStats(entry) {
     const live = this.liveIds(entry);
@@ -105,7 +99,7 @@ class HomeKitPreviewPanel extends HTMLElement {
   async applyDraft(entry) {
     if (!entry) return;
     const filter = this.exactFilter(entry);
-    const msg = `Apply exact HomeKit entity list to ${entry.title}?\n\nThis will remove domain-wide includes and write ${filter.include_entities.length} explicit entities.`;
+    const msg = `Apply exact HomeKit entity list to ${entry.title}?\n\nThis removes domain-wide includes and writes ${filter.include_entities.length} explicit entities. It reloads this HomeKit entry.`;
     if (!confirm(msg)) return;
     this._loading = true;
     this._message = "Applying filter...";
@@ -147,7 +141,7 @@ class HomeKitPreviewPanel extends HTMLElement {
     for (const entity of this.candidates(entry)) {
       const room = entity.area || "No room";
       if (this._room !== "all" && room !== this._room) continue;
-      const hay = [entity.entity_id, entity.name, entity.domain, entity.area, entity.device, entity.state].filter(Boolean).join(" ").toLowerCase();
+      const hay = [entity.entity_id, entity.name, entity.domain, entity.area, entity.device, entity.state, entity.inclusion_reason].filter(Boolean).join(" ").toLowerCase();
       if (q && !hay.includes(q)) continue;
       const key = this.deviceKey(entity);
       if (!groups.has(key)) groups.set(key, { key, room, name: entity.device || "No device", entities: [] });
@@ -177,7 +171,17 @@ class HomeKitPreviewPanel extends HTMLElement {
   scheduleSearch(value) {
     this._search = value;
     clearTimeout(this._searchTimer);
-    this._searchTimer = setTimeout(() => this.render(), 180);
+    this._searchTimer = setTimeout(() => {
+      const input = this.shadowRoot?.getElementById("entitySearch");
+      const selection = typeof input?.selectionStart === "number" ? input.selectionStart : this._search.length;
+      this.render();
+      const next = this.shadowRoot?.getElementById("entitySearch");
+      if (next) {
+        next.focus();
+        const pos = Math.min(selection, next.value.length);
+        next.setSelectionRange?.(pos, pos);
+      }
+    }, 220);
   }
 
   render() {
@@ -197,14 +201,14 @@ class HomeKitPreviewPanel extends HTMLElement {
       </style>
       <div class="wrap">
         <div class="top">
-          <div class="titleRow"><img class="appIcon" src="${ICON_URL}" alt=""><div><h1>HomeKit Preview</h1><div class="sub">Room → device → choose entities. No more domain trap.</div></div></div>
+          <div class="titleRow"><img class="appIcon" src="${ICON_URL}" alt=""><div><h1>HomeKit Preview</h1><div class="sub">Room → device → choose entities. Applies an exact list, so domain traps die.</div></div></div>
           <div class="controls">
             <select id="bridgeSelect" aria-label="HomeKit bridge">${entries.map((item) => `<option value="${this.escape(item.entry_id)}" ${item.entry_id === this._selected ? "selected" : ""}>${this.escape(item.title || "HomeKit entry")} · ${this.escape(item.port || "unknown port")}</option>`).join("")}</select>
             <button id="refresh" ${this._loading ? "disabled" : ""}>${this._loading ? "Scanning..." : "Scan / Refresh"}</button>
           </div>
         </div>
         <div class="tabs"><button class="tab ${this._tab === "device" ? "active" : ""}" data-tab="device">Device Picker</button><button class="tab ${this._tab === "preview" ? "active" : ""}" data-tab="preview">Live Preview</button><button class="tab ${this._tab === "raw" ? "active" : ""}" data-tab="raw">Raw</button></div>
-        ${this._message ? `<div class="card ${this._message.includes("failed") || this._message.includes("failed") ? "error" : "ok"}"><b>${this.escape(this._message)}</b></div>` : ""}
+        ${this._message ? `<div class="card ${this._message.includes("failed") || this._message.includes("Failed") ? "error" : "ok"}">${this.escape(this._message)}</div>` : ""}
         ${(data.warnings || []).length ? `<div class="card warn"><b>Warnings</b><ul>${data.warnings.map((w) => `<li>${this.escape(w)}</li>`).join("")}</ul></div>` : ""}
         <div class="cards"><div class="card"><div class="num">${data.entry_count ?? 0}</div><div class="label">HomeKit entries</div></div><div class="card"><div class="num">${data.total_exposed ?? 0}</div><div class="label">Total live exposed</div></div><div class="card"><div class="num">${entry?.exposed_count ?? 0}</div><div class="label">Selected live</div></div><div class="card"><div class="num">${stats.draft}</div><div class="label">Draft exact list</div></div><div class="card"><div class="num good">${stats.added}</div><div class="label">Would add</div></div><div class="card"><div class="num bad">${stats.removed}</div><div class="label">Would remove</div></div><div class="card ${entry?.domain_wide_include_count ? "warn" : ""}"><div class="num">${entry?.domain_wide_include_count ?? 0}</div><div class="label">ALL-domain traps</div></div></div>
         ${entry ? (this._tab === "device" ? this.renderDevicePicker(entry, rooms, devices, selectedDevice, stats) : this._tab === "raw" ? this.renderRaw(entry) : this.renderPreview(entry, previewRows, rooms)) : `<div class="card empty">No HomeKit entries found.</div>`}
@@ -229,7 +233,7 @@ class HomeKitPreviewPanel extends HTMLElement {
   }
 
   renderControls(rooms) {
-    return `<div class="toolbar"><div class="controls"><select id="roomFilter"><option value="all">All rooms</option>${rooms.map((room) => `<option value="${this.escape(room)}" ${room === this._room ? "selected" : ""}>${this.escape(room)}</option>`).join("")}</select><input id="entitySearch" placeholder="Search room, device, entity..." value="${this.escape(this._search)}"></div></div>`;
+    return `<div class="toolbar"><div class="controls"><select id="roomFilter"><option value="all">All rooms</option>${rooms.map((room) => `<option value="${this.escape(room)}" ${room === this._room ? "selected" : ""}>${this.escape(room)}</option>`).join("")}</select><input id="entitySearch" placeholder="Search room, device, entity..." value="${this.escape(this._search)}" autocomplete="off"></div></div>`;
   }
 
   renderDevicePicker(entry, rooms, devices, selectedDevice, stats) {
