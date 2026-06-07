@@ -17,7 +17,7 @@ from .const import (
 from .preview import build_preview, markdown_preview
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS = ["sensor"]
+PLATFORMS = ["sensor", "button"]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -34,9 +34,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     await coordinator.async_config_entry_first_refresh()
 
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {DATA_COORDINATOR: coordinator}
-
-    async def handle_scan(call: ServiceCall) -> None:
+    async def async_scan_and_notify() -> None:
         """Refresh preview data and optionally publish a notification."""
         try:
             await coordinator.async_request_refresh()
@@ -54,6 +52,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except Exception:  # noqa: BLE001 - surface full traceback in HA logs.
             _LOGGER.exception("HomeKit Preview scan failed")
             raise
+
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
+        DATA_COORDINATOR: coordinator,
+        "async_scan_and_notify": async_scan_and_notify,
+    }
+
+    async def handle_scan(call: ServiceCall) -> None:
+        """Service handler for manual scans."""
+        await async_scan_and_notify()
 
     hass.services.async_register(DOMAIN, SCAN_SERVICE, handle_scan)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
