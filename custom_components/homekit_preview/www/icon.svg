@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="HomeKit Preview icon">
+  <defs>
+    <linearGradient id="bg" x1="40" y1="28" x2="216" y2="228" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#41BDF5"/>
+      <stop offset="1" stop-color="#18BC9C"/>
+    </linearGradient>
+  </defs>
+  <rect x="18" y="18" width="220" height="220" rx="54" fill="url(#bg)"/>
+  <path d="M58 122 128 66l70 56v76a12 12 0 0 1-12 12h-36v-54h-44v54H70a12 12 0 0 1-12-12v-76Z" fill="white" opacity="0.96"/>
+  <path d="M72 124 128 79l56 45" fill="none" stroke="#0B2742" stroke-opacity="0.18" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="128" cy="135" r="28" fill="#0B2742" opacity="0.18"/>
+  <circle cx="128" cy="135" r="15" fill="#0B2742" opacity="0.35"/>
+  <path d="M178 78v35h35" fill="none" stroke="white" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M212 79 178 113" fill="none" stroke="white" stroke-width="14" stroke-linecap="round"/>
+</svg>
