@@ -42,7 +42,7 @@ class HomeKitPreviewOptionsFlow(config_entries.OptionsFlow):
     """Options flow for HomeKit Preview."""
 
     def __init__(self, config_entry):
-        self.config_entry = config_entry
+        self._config_entry = config_entry
 
     async def async_step_init(self, user_input=None):
         """Manage options."""
@@ -53,9 +53,9 @@ class HomeKitPreviewOptionsFlow(config_entries.OptionsFlow):
             {
                 vol.Optional(
                     CONF_CREATE_NOTIFICATION,
-                    default=self.config_entry.options.get(
+                    default=self._config_entry.options.get(
                         CONF_CREATE_NOTIFICATION,
-                        self.config_entry.data.get(
+                        self._config_entry.data.get(
                             CONF_CREATE_NOTIFICATION,
                             DEFAULT_CREATE_NOTIFICATION,
                         ),
