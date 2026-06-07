@@ -21,7 +21,7 @@ from .preview import build_preview, markdown_preview
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = ["sensor", "button"]
 PANEL_URL_PATH = "homekit-preview"
-PANEL_JS_URL = "/homekit_preview_static/panel.js"
+PANEL_JS_URL = "/homekit_preview_static/panel.js?v=0.3.0"
 
 
 async def _async_register_static_path(hass: HomeAssistant) -> None:
@@ -52,15 +52,17 @@ def _register_panel(hass: HomeAssistant) -> None:
     try:
         from homeassistant.components import panel_custom
 
-        panel_custom.async_register_panel(
-            hass,
-            webcomponent_name="homekit-preview-panel",
-            frontend_url_path=PANEL_URL_PATH,
-            module_url=PANEL_JS_URL,
-            sidebar_title="HomeKit Preview",
-            sidebar_icon="mdi:home-export-outline",
-            require_admin=True,
-            config={},
+        hass.async_create_task(
+            panel_custom.async_register_panel(
+                hass,
+                webcomponent_name="homekit-preview-panel",
+                frontend_url_path=PANEL_URL_PATH,
+                module_url=PANEL_JS_URL,
+                sidebar_title="HomeKit Preview",
+                sidebar_icon="mdi:home-export-outline",
+                require_admin=True,
+                config={},
+            )
         )
     except Exception:  # noqa: BLE001 - sidebar failure should not break the helper.
         _LOGGER.exception("Failed to register HomeKit Preview sidebar panel")
