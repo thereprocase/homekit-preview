@@ -81,3 +81,9 @@ If your HomeKit Bridge entry is YAML/import-managed, Home Assistant may overwrit
 ## Development status
 
 Useful, sharp, and still young. Built specifically because HomeKit Bridge's UI makes it too hard to answer the simple question: “what will my spouse see after scanning this QR code?”
+
+## Project website
+
+[Open the HomeKit Preview site](https://thereprocase.github.io/homekit-preview/) for previews, setup and project resources. [Browse all project groups](https://thereprocase.github.io/).
+
+The static site lives in `docs/` and uses the shared [Gridline design system](https://github.com/thereprocase/thereprocase.github.io/blob/main/GRIDLINE.md). Edit `docs/index.html` and `docs/site.js`; shared styles live in `docs/gridline/`. GitHub Pages serves `main:/docs`.
